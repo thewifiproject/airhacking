@@ -4,6 +4,7 @@ from flask import Flask, render_template_string, request, redirect
 from bs4 import BeautifulSoup
 import argparse
 from urllib.parse import urljoin
+import re
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -104,20 +105,29 @@ def download_static_assets(base_url):
     except requests.RequestException as e:
         print(f"[ERROR] Error downloading assets: {e}")
 
-# Function to download a single asset
+# Function to download a single asset with sanitized filename
 def download_asset(url):
     try:
         print(f"[INFO] Downloading asset: {url}")
         asset_response = requests.get(url)
         if asset_response.status_code == 200:
-            asset_name = os.path.join(static_dir, os.path.basename(url))
-            with open(asset_name, "wb") as f:
+            # Sanitize the file name to avoid invalid characters
+            asset_name = os.path.basename(url)
+            asset_name = sanitize_filename(asset_name)
+            asset_path = os.path.join(static_dir, asset_name)
+
+            with open(asset_path, "wb") as f:
                 f.write(asset_response.content)
-            print(f"[INFO] Asset saved to {asset_name}")
+            print(f"[INFO] Asset saved to {asset_path}")
         else:
             print(f"[ERROR] Failed to download asset: {url}")
     except requests.RequestException as e:
         print(f"[ERROR] Error downloading asset: {e}")
+
+# Function to sanitize filenames (remove invalid characters)
+def sanitize_filename(filename):
+    # Replace characters that are not allowed in filenames
+    return re.sub(r'[<>:"/\\|?*]', "_", filename)
 
 # Main entry point
 if __name__ == "__main__":
