@@ -1,11 +1,11 @@
-// server.js
-const express = require('express');
-const bodyParser = require('body-parser');
-const chalk = require('chalk');
+// server.mjs
+import express from 'express';
+import bodyParser from 'body-parser';
+import chalk from 'chalk';
 
 const app = express();
 const port = 3000;
-const localIP = '10.0.1.33'; // Replace this with your local IP address
+const localIP = '10.0.1.33'; // Replace with your local IP address
 
 // Middleware to parse incoming JSON or URL-encoded data
 app.use(bodyParser.urlencoded({ extended: true }));
