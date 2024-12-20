@@ -4,6 +4,7 @@ import argparse
 from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify
 import threading
+import signal
 
 # Flask Setup for Hosting Server
 app = Flask(__name__)
@@ -85,15 +86,20 @@ def execute_command(command):
 def main():
     """Main method for the command-line tool."""
     while True:
-        # Simulate the command prompt interface
-        command = input("webattack > ")
-        
-        if command == "exit":
-            print("Exiting webattack tool.")
-            break
-        
-        # Execute the given command
-        execute_command(command)
+        try:
+            # Simulate the command prompt interface
+            command = input("webattack > ")
+            
+            if command == "exit":
+                print("Exiting webattack tool.")
+                break
+            
+            # Execute the given command
+            execute_command(command)
+
+        except KeyboardInterrupt:
+            # Handle Ctrl+C gracefully
+            print("\nCtrl+C detected, continuing to run the Flask server in the background.")
 
 if __name__ == '__main__':
     main()
