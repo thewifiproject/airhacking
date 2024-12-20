@@ -5,7 +5,7 @@ const chalk = require('chalk');
 
 const app = express();
 const port = 3000;
-const localIP = '10.0.1.33'; // Change this to your local IP address
+const localIP = '10.0.1.33'; // Replace this with your local IP address
 
 // Middleware to parse incoming JSON or URL-encoded data
 app.use(bodyParser.urlencoded({ extended: true }));
