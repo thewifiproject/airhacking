@@ -76,7 +76,10 @@ def execute_command(command):
         flask_thread = threading.Thread(target=run_flask)
         flask_thread.daemon = True
         flask_thread.start()
-
+        
+        # Wait for Flask server to be ready before sending request
+        time.sleep(2)  # Wait 2 seconds to ensure Flask server is up
+        
         # Send POST request to clone the site
         clone_url = f'http://127.0.0.1:5000/clone'
         payload = {'target_url': target_url}
