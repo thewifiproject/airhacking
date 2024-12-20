@@ -1,33 +1,28 @@
 // server.js
 const express = require('express');
 const bodyParser = require('body-parser');
+const chalk = require('chalk');
 
-// Create an Express app
 const app = express();
+const port = 3000;
 
-// Middleware to parse POST request data
+// Middleware to parse incoming JSON or URL-encoded data
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
 
-// Handle the login POST request
+// Route to handle POST requests from the login form
 app.post('/', (req, res) => {
     const { username, password } = req.body;
 
-    if (username && password) {
-        console.log('Received credentials:', { username, password });
+    // Print credentials in green
+    console.log(chalk.green(`Username: ${username}`));
+    console.log(chalk.green(`Password: ${password}`));
 
-        // You can now process the credentials (e.g., check against a database)
-
-        // Send a response to the client
-        res.send('Credentials received successfully');
-    } else {
-        res.status(400).send('Username and password are required');
-    }
+    // Send a response
+    res.send('Credentials received');
 });
 
-// Start the server on 10.0.1.33
-const PORT = 3000;
-const HOST = '10.0.1.33'; // Server's IP address
-
-app.listen(PORT, HOST, () => {
-    console.log(`Server running at http://${HOST}:${PORT}`);
+// Start the server
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
 });
