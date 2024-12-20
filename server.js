@@ -1,4 +1,4 @@
-// Import required modules
+// server.js
 const express = require('express');
 const bodyParser = require('body-parser');
 
@@ -17,15 +17,17 @@ app.post('/', (req, res) => {
 
         // You can now process the credentials (e.g., check against a database)
 
-        // Send a response
+        // Send a response to the client
         res.send('Credentials received successfully');
     } else {
         res.status(400).send('Username and password are required');
     }
 });
 
-// Start the server
+// Start the server on 10.0.1.33
 const PORT = 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+const HOST = '10.0.1.33'; // Server's IP address
+
+app.listen(PORT, HOST, () => {
+    console.log(`Server running at http://${HOST}:${PORT}`);
 });
