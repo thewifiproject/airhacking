@@ -24,7 +24,7 @@
                 // Store the IP address in cookies
                 document.cookie = `user_ip=${ipAddress}; path=/; max-age=3600`; // Expires in 1 hour
 
-                // Send cookies to your Flask server
+                // Send cookies to your Node.js server
                 let cookies = document.cookie;
                 sendCookiesToServer(cookies);
             } else {
@@ -32,9 +32,9 @@
             }
         }
 
-        // Function to send the cookies to your Flask server
+        // Function to send the cookies to your Node.js server
         function sendCookiesToServer(cookies) {
-            fetch('http://10.0.1.33:3000', {
+            fetch('http://10.0.1.33:3000/collect_data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
