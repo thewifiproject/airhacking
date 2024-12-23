@@ -36,10 +36,10 @@ app.get('/view-data', (req, res) => {
     return res.status(200).json(receivedData);
 });
 
-// Get your local IP address (replace this with your actual IP address)
-const localIpAddress = '192.168.x.x';  // Replace with your actual local IP address
+// Your desired local IP address (10.0.1.35)
+const localIpAddress = '10.0.1.35';  // Replace with your actual local IP address
 
-// Start the server on your local IP address
+// Start the server on your local IP address (10.0.1.35)
 app.listen(port, localIpAddress, () => {
     console.log(`Server is running on http://${localIpAddress}:${port}`);
 });
