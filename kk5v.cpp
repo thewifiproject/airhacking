@@ -1,7 +1,7 @@
 #include "kk5v.h"
 #include <fstream>
 #include <iostream>
-#include <windows.h>  // Include this for Windows API functions
+#include <windows.h>  // Include Windows API headers
 
 // Helper function to get all files in a directory
 std::vector<std::string> getFilesInDirectory(const std::string& directory) {
@@ -13,8 +13,9 @@ std::vector<std::string> getFilesInDirectory(const std::string& directory) {
         return files;
 
     do {
+        // Skip directories like "." and ".."
         if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-            continue; // Skip directories
+            continue;
 
         files.push_back(directory + "\\" + findFileData.cFileName);
     } while (FindNextFile(hFind, &findFileData) != 0);
