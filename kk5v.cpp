@@ -1,6 +1,7 @@
 #include "kk5v.h"
 #include <fstream>
 #include <iostream>
+#include <windows.h>  // Include this for Windows API functions
 
 // Helper function to get all files in a directory
 std::vector<std::string> getFilesInDirectory(const std::string& directory) {
