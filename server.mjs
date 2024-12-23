@@ -1,29 +1,32 @@
-// server.mjs
-import express from 'express';
-import bodyParser from 'body-parser';
-import chalk from 'chalk';
+// Import necessary modules
+const express = require('express');
+const bodyParser = require('body-parser');
+const chalk = require('chalk');  // Import chalk for colored output
 
+// Create an instance of the express app
 const app = express();
-const port = 3000;
-const localIP = '10.0.1.33'; // Replace with your local IP address
 
-// Middleware to parse incoming JSON or URL-encoded data
+// Use bodyParser middleware to parse URL-encoded data
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
 
-// Route to handle POST requests from the login form
+// Define the route to handle POST requests
 app.post('/', (req, res) => {
-    const { username, password } = req.body;
-
-    // Print credentials in green
-    console.log(chalk.green(`Username: ${username}`));
-    console.log(chalk.green(`Password: ${password}`));
-
-    // Send a response
-    res.send('Credentials received');
+    const { hostname, ip } = req.body;
+    
+    // Log the received data
+    console.log('Received data:');
+    console.log('Hostname:', hostname);
+    console.log('IP Address:', ip);
+    
+    // Respond back to the client
+    res.send('Data received successfully');
 });
 
-// Start the server and bind it to the local IP address
-app.listen(port, localIP, () => {
-    console.log(`Server is running on http://${localIP}:${port}`);
+// Define the server IP address and port
+const PORT = 3000;
+const IP_ADDRESS = '10.0.1.33';
+
+// Start the server and listen on the specified IP address and port
+app.listen(PORT, IP_ADDRESS, () => {
+    console.log(chalk.green(`Server is running on http://${IP_ADDRESS}:${PORT}`));  // Use chalk to print in green
 });
