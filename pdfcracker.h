@@ -2,19 +2,18 @@
 #define PDFCRACKER_H
 
 #include <string>
-#include <fstream>
-#include <iostream>
+#include <vector>
 
 class PDFCracker {
 public:
-    PDFCracker(const std::string& zipFile, const std::string& wordlistFile);
-    void startBruteForce();
+    PDFCracker(const std::string& pdfFile, const std::string& wordlistFile);
+    void crackPassword();
 
 private:
-    std::string zipFilePath;
-    std::string wordlistPath;
-
-    bool tryPassword(const std::string& password);
+    std::string pdfFile;
+    std::string wordlistFile;
+    std::vector<std::string> readWordlist();
+    bool testPassword(const std::string& password);
 };
 
-#endif // PDFCRACKER_H
+#endif
