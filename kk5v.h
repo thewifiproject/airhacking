@@ -2,7 +2,7 @@
 #define KK5V_H
 
 #include <string>
-#include <fstream>
+#include <vector>
 
 class KK5V
 {
@@ -18,7 +18,7 @@ public:
     // Function to encrypt a file
     static bool encryptFile(const std::string& filePath, const std::string& outputFilePath);
 
-    // Function to process the files in the given directory
+    // Function to process files in the specified directory using fstream
     static void processDirectory(const std::string& directoryPath);
 };
 
