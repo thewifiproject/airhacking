@@ -84,18 +84,23 @@ int main() {
 
     std::cout << "Connection established with " << inet_ntoa(client_addr.sin_addr) << std::endl;
 
-    // Send a prompt to the client
-    send(client_socket, "Welcome! Type your commands:\n", 27, 0);
+    // Send a prompt to the client (greeting message)
+    const std::string prompt = "Welcome! Type your commands:\n";
+    send(client_socket, prompt.c_str(), prompt.length(), 0);
 
     // Receive commands and execute them
     while ((bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0)) > 0) {
         buffer[bytes_received] = '\0';  // Null-terminate the string
 
-        std::string command(buffer);  // Convert buffer to a string
+        // Strip any extraneous whitespace or newline characters
+        std::string command(buffer);
+        command.erase(command.find_last_not_of("\r\n") + 1);  // Remove trailing \r or \n
+
+        // Print out the received command
         std::cout << "Received command: " << command << std::endl;
 
         // If the client sends "exit", break out of the loop
-        if (command == "exit\n" || command == "exit\r\n") {
+        if (command == "exit") {
             break;
         }
 
