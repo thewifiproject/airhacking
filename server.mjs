@@ -1,7 +1,7 @@
 // Import necessary modules
-const express = require('express');
-const bodyParser = require('body-parser');
-const chalk = require('chalk');  // Import chalk for colored output
+import express from 'express';
+import bodyParser from 'body-parser';
+import chalk from 'chalk';  // Import chalk for colored output
 
 // Create an instance of the express app
 const app = express();
