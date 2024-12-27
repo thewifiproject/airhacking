@@ -1,17 +1,17 @@
 import hashlib
 
-def hash_word():
+def hash_word_md5():
     # Prompt the user to enter a word
     word = input("ENTER WORD: ")
     
-    # Create a SHA-1 hash object
-    sha1_hash = hashlib.sha1()
+    # Create an MD5 hash object
+    md5_hash = hashlib.md5()
     
     # Update the hash object with the word (encoded to bytes)
-    sha1_hash.update(word.encode('utf-8'))
+    md5_hash.update(word.encode('utf-8'))
     
     # Print the hexadecimal representation of the hash
-    print("SHA-1 Hash:", sha1_hash.hexdigest())
+    print("MD5 Hash:", md5_hash.hexdigest())
 
 # Call the function to run the tool
-hash_word()
+hash_word_md5()
