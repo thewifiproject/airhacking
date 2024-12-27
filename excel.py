@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, filedialog
-import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
 class SpreadsheetApp:
@@ -11,8 +10,8 @@ class SpreadsheetApp:
         self.root.geometry("800x600")
 
         # Variables to hold the spreadsheet data
-        self.data = pd.DataFrame()
-        
+        self.data = [[None] * 10 for _ in range(10)]  # 10x10 grid
+
         # Menu bar
         self.create_menu()
 
@@ -38,9 +37,6 @@ class SpreadsheetApp:
         self.table_frame = tk.Frame(self.root)
         self.table_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Create an empty DataFrame with 10 rows and 10 columns
-        self.data = pd.DataFrame([[None] * 10 for _ in range(10)])
-
         self.cells = []
         for i in range(10):
             row_cells = []
@@ -53,38 +49,55 @@ class SpreadsheetApp:
     def load_spreadsheet(self):
         file_path = filedialog.askopenfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
         if file_path:
-            self.data = pd.read_excel(file_path)
-            self.update_table()
+            try:
+                wb = load_workbook(file_path)
+                sheet = wb.active
+                self.data = [[sheet.cell(row=i+1, column=j+1).value for j in range(10)] for i in range(10)]
+                self.update_table()
+            except Exception as e:
+                messagebox.showerror("Error", f"Error loading file: {e}")
 
     def save_spreadsheet(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
         if file_path:
-            self.data.to_excel(file_path, index=False)
+            try:
+                wb = Workbook()
+                sheet = wb.active
+                for i in range(10):
+                    for j in range(10):
+                        sheet.cell(row=i+1, column=j+1, value=self.data[i][j])
+                wb.save(file_path)
+            except Exception as e:
+                messagebox.showerror("Error", f"Error saving file: {e}")
 
     def update_table(self):
-        # Update the table with data from the DataFrame
-        for i in range(len(self.data)):
-            for j in range(len(self.data.columns)):
+        for i in range(10):
+            for j in range(10):
                 self.cells[i][j].delete(0, tk.END)
-                self.cells[i][j].insert(tk.END, str(self.data.iloc[i, j]))
+                self.cells[i][j].insert(tk.END, str(self.data[i][j]) if self.data[i][j] is not None else '')
 
     def make_bold(self):
-        # Mark the selected cell as bold
         for i in range(10):
             for j in range(10):
                 if self.cells[i][j].focus_get():
-                    self.cells[i][j].config(font=('Arial', 10, 'bold'))
-                    self.data.iloc[i, j] = self.cells[i][j].get()
+                    current_font = self.cells[i][j].cget("font")
+                    new_font = ('Arial', 10, 'bold' if 'bold' not in current_font else 'normal')
+                    self.cells[i][j].config(font=new_font)
+                    self.data[i][j] = self.cells[i][j].get()
 
     def calculate_sum(self):
-        # Sum values in the column
         for j in range(10):
             try:
-                col_sum = self.data.iloc[:, j].apply(pd.to_numeric, errors='coerce').sum()
+                col_sum = 0
+                for i in range(10):
+                    cell_value = self.data[i][j]
+                    if isinstance(cell_value, (int, float)):
+                        col_sum += cell_value
                 self.cells[9][j].delete(0, tk.END)
                 self.cells[9][j].insert(tk.END, str(col_sum))
+                self.data[9][j] = col_sum  # Store sum in the last row
             except Exception as e:
-                messagebox.showerror("Error", "Error in calculating sum: " + str(e))
+                messagebox.showerror("Error", f"Error in calculating sum: {e}")
 
 if __name__ == "__main__":
     root = tk.Tk()
