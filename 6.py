@@ -3,6 +3,7 @@ from hashlib import pbkdf2_hmac
 from scapy.all import rdpcap, EAPOL, Dot11, Dot11Beacon
 
 def extract_wpa_details(packet):
+    eapol_details = {}
     if packet.haslayer(EAPOL):
         eapol = packet[EAPOL]
         if eapol.type == 3:  # EAPOL-Key
@@ -14,7 +15,7 @@ def extract_wpa_details(packet):
             print(f"Key Nonce: {key_nonce.hex()}")
             print(f"AP MAC: {ap_mac}")
             print(f"Client MAC: {client_mac}")
-            return {
+            eapol_details = {
                 "key_mic": key_mic,
                 "key_nonce": key_nonce,
                 "ap_mac": ap_mac,
@@ -24,8 +25,8 @@ def extract_wpa_details(packet):
     if packet.haslayer(Dot11Beacon):
         ssid = packet.info.decode()
         print(f"SSID: {ssid}")
-        return ssid
-    return None
+        return ssid, eapol_details
+    return None, eapol_details
 
 def derive_ptk(pmk, ap_mac, client_mac, anonce, snonce):
     b = min(ap_mac, client_mac) + max(ap_mac, client_mac) + min(anonce, snonce) + max(anonce, snonce)
@@ -56,9 +57,12 @@ def main():
     
     for pkt in packets:
         if not ssid:
-            ssid = extract_wpa_details(pkt)
-        if not eapol_details:
-            eapol_details = extract_wpa_details(pkt)
+            ssid, details = extract_wpa_details(pkt)
+        else:
+            _, details = extract_wpa_details(pkt)
+        
+        if details:
+            eapol_details = details
     
     if ssid and eapol_details:
         crack_wpa_passphrase(
