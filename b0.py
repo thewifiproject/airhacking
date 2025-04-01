@@ -26,15 +26,21 @@ def extract_wpa_details(packet):
 
     return None, None, None, None
 
-# Function to generate PMK from the passphrase, SSID, and nonces
 def generate_pmk(passphrase, ssid, ap_mac, client_mac):
     ssid_bytes = ssid.encode('utf-8')
+    
+    # Ensure MAC addresses are in valid format, remove non-hex characters (e.g., ':')
     ap_mac_bytes = binascii.unhexlify(ap_mac.replace(":", ""))
     client_mac_bytes = binascii.unhexlify(client_mac.replace(":", ""))
+
+    # Check for correct length of MAC addresses (should be 6 bytes each)
+    if len(ap_mac_bytes) != 6 or len(client_mac_bytes) != 6:
+        raise ValueError(f"Invalid MAC address format: {ap_mac} or {client_mac}")
     
     # Prepare the key material for PBKDF2
     pmk = hashlib.pbkdf2_hmac('sha1', passphrase.encode('utf-8'), ssid_bytes, 4096, 32)
     return pmk
+
 
 # Function to perform a dictionary attack using PBKDF2-HMAC-SHA1
 def dictionary_attack(wordlist, ssid, key_mic, key_nonce, ap_mac, client_mac):
