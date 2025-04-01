@@ -24,6 +24,7 @@ def perform_attack(packets, ssid, wordlist):
     for pkt in packets:
         key_mic = extract_wpa_key_mic(pkt)
         if key_mic:
+            print(f"Found EAPOL packet with MIC: {key_mic.hex()}")  # Debug print
             ap_mac = pkt.addr2
             cli_mac = pkt.addr1
             anonce = pkt.load[13:45]
@@ -54,7 +55,7 @@ def main():
     wordlist = args.wordlist
 
     packets = rdpcap(pcap_file)
-    ssid = "PEKLO"  # Replace with actual SSID
+    ssid = "test"  # Replace with actual SSID
 
     perform_attack(packets, ssid, wordlist)
     
