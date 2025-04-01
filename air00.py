@@ -14,7 +14,7 @@ def extract_wpa_key_mic(packet):
     return None
 
 def derive_pmk(ssid, passphrase):
-    return pbkdf2_sha1.hash(passphrase, salt=ssid, rounds=4096, keylen=32)
+    return pbkdf2_sha1.using(salt=ssid, rounds=4096, keylen=32).hash(passphrase)
 
 def calculate_mic(pmk, ap_mac, cli_mac, anonce, snonce, eapol_frame):
     kck = pmk[:16]
