@@ -13,7 +13,7 @@ def customPRF512(key, A, B):
         R = R + hmacsha1.digest()
     return R[:blen]
 
-pcap=pyshark.FileCapture("wpa.cap",display_filter="eapol")
+pcap=pyshark.FileCapture("Shak.cap",display_filter="eapol")
 pcap[0][2].raw_mode=True
 pcap[0][4].raw_mode=True
 pcap[1][4].raw_mode=True
@@ -79,7 +79,7 @@ eapol1={
 # Print the concatenated values in a single row
 #print(tarundump1)
 file_path = 'wordlist.txt'
-ssid = "test"
+ssid = "PEKLO"
 A = "Pairwise key expansion"
 APmac = binascii.a2b_hex(sourcemac)
 Clientmac = binascii.a2b_hex(destinationmac)
