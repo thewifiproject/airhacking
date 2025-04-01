@@ -54,7 +54,8 @@ def main():
     pcap_file = args.file
     wordlist = args.wordlist
 
-    packets "test"  # Replace with actual SSID
+    packets = rdpcap(pcap_file)
+    ssid = "test"  # Replace with actual SSID
 
     perform_attack(packets, ssid, wordlist)
     
