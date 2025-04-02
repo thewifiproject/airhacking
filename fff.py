@@ -1,88 +1,35 @@
-import pyshark
 import argparse
-from collections import defaultdict
+import binascii
+import scapy.all as scapy
 
-
-def capture_wifi(interface):
-    # Create a capture object using PyShark to listen on the specified interface
-    capture = pyshark.LiveCapture(interface=interface, display_filter='wlan.fc.type_subtype == 0x08')
-
-    networks = defaultdict(list)
-    clients = defaultdict(list)
-
-    # Parse the packets and extract relevant details
-    for packet in capture.sniff_continuously():
-        if 'wlan' in packet:
-            if hasattr(packet.wlan, 'addr2') and hasattr(packet.wlan, 'ssid'):
-                bssid = packet.wlan.addr2
-                ssid = packet.wlan.ssid
-                encryption = 'OPN'  # Default is no encryption
-                auth = 'OPN'  # Default is open authentication
-                channel = packet.wlan_radio.channel
-
-                # Check for encryption and authentication
-                if 'wlan.sa' in packet:
-                    auth = 'PSK'  # PSK is default for WPA/WPA2
-                    if 'CCMP' in packet:
-                        encryption = 'WPA2'
-                    elif 'TKIP' in packet:
-                        encryption = 'WPA'
-                    elif 'WEP' in packet:
-                        encryption = 'WEP'
-
-                # Handle Opportunistic Wireless Encryption (OWE)
-                if 'OWE' in packet:
-                    encryption = 'OWE'
-
-                power = packet.dbm_antenna_signal if hasattr(packet, 'dbm_antenna_signal') else None
-                clients[bssid].append(packet.wlan.sa)  # Track associated clients or searching stations
-                networks[bssid].append({
-                    'SSID': ssid,
-                    'BSSID': bssid,
-                    'Encryption': encryption,
-                    'Auth': auth,
-                    'Channel': channel,
-                    'PWR': power
-                })
-
-    return networks, clients
-
-
-def print_network_info(networks, clients):
-    print("{:<20} {:<20} {:<10} {:<10} {:<10} {:<20}".format('SSID', 'BSSID', 'Encryption', 'Auth', 'Channel', 'Power'))
-    print("-" * 90)
-
-    for bssid, network_info in networks.items():
-        for net in network_info:
-            ssid = net['SSID']
-            bssid = net['BSSID']
-            encryption = net['Encryption']
-            auth = net['Auth']
-            channel = net['Channel']
-            power = net['PWR'] if net['PWR'] else "N/A"
-
-            # Output network details
-            print("{:<20} {:<20} {:<10} {:<10} {:<10} {:<20}".format(ssid, bssid, encryption, auth, channel, power))
-
-            # Output associated stations (clients)
-            stations = clients[bssid]
-            if stations:
-                for station in stations:
-                    print(f"  Client MAC: {station}")
-            else:
-                print(f"  Client MAC: (not associated)")
-
+def extract_pmkid(pcap_file):
+    packets = scapy.rdpcap(pcap_file)
+    for packet in packets:
+        if packet.haslayer(scapy.EAPOL):
+            # Check if this packet contains the PMKID in the RSN information element
+            raw = packet[scapy.EAPOL].original
+            if len(raw) >= 100:
+                pmkid = raw[-20:-4]
+                ap_mac = packet.addr2.replace(':', '') if isinstance(packet.addr2, str) else binascii.hexlify(packet.addr2).decode()
+                sta_mac = packet.addr1.replace(':', '') if isinstance(packet.addr1, str) else binascii.hexlify(packet.addr1).decode()
+                return pmkid.hex(), ap_mac, sta_mac
+    return None, None, None
 
 def main():
-    parser = argparse.ArgumentParser(description='Capture and display nearby Wi-Fi networks')
-    parser.add_argument('-i', '--interface', required=True, help='Network interface to capture from')
+    parser = argparse.ArgumentParser(description='PMKID extraction tool')
+    parser.add_argument('pcap_file', help='Path to the .cap or .pcap file')
     args = parser.parse_args()
 
-    print("Capturing nearby Wi-Fi networks...")
-    networks, clients = capture_wifi(args.interface)
+    pcap_file = args.pcap_file
 
-    print_network_info(networks, clients)
+    pmkid, ap_mac, sta_mac = extract_pmkid(pcap_file)
+    if pmkid is None:
+        print("PMKID not found in the capture file")
+        return
 
+    print(f"Extracted PMKID: {pmkid}")
+    print(f"AP MAC: {ap_mac}")
+    print(f"STA MAC: {sta_mac}")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
