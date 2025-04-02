@@ -1,52 +1,53 @@
 import argparse
 from scapy.all import rdpcap, Dot11, EAPOL
 
-def to_hex(byte_string):
-    if byte_string:
-        return byte_string.hex()
-    return None
-
 def extract_info(pcap_file):
     packets = rdpcap(pcap_file)
-    ssid = None
-    bssid = None
-    ap_mac = None
-    sta_mac = None
-    anonce = None
-    snonce = None
-    key_mic = None
+    ssid = ""
+    bssid = ""
+    ap_mac = ""
+    sta_mac = ""
+    key_mic = ""
+    anonce = ""
+    snonce = ""
 
-    for packet in packets:
-        if packet.haslayer(Dot11):
-            if packet.type == 0 and packet.subtype == 8:  # Beacon frame
-                ssid = packet.info.decode()
-                bssid = packet.addr2
-            elif packet.type == 2:  # Data frame
-                if packet.addr1 and packet.addr2:
-                    ap_mac = packet.addr1
-                    sta_mac = packet.addr2
+    for pkt in packets:
+        if pkt.haslayer(Dot11):
+            if pkt.type == 0 and pkt.subtype == 8:  # Beacon frame
+                ssid = pkt.info.decode()
+                bssid = pkt.addr2
+                ap_mac = pkt.addr2
 
-        if packet.haslayer(EAPOL):
-            eapol = packet.getlayer(EAPOL)
-            if eapol and eapol.type == 3:  # Key frame
-                if not anonce and eapol.key_nonce:
-                    anonce = eapol.key_nonce
-                elif not snonce and eapol.key_nonce:
-                    snonce = eapol.key_nonce
-                if eapol.key_mic:
-                    key_mic = eapol.key_mic
+            if pkt.type == 0 and pkt.subtype == 4:  # Probe request
+                sta_mac = pkt.addr2
 
-    print(f"SSID: {ssid}")
-    print(f"BSSID: {bssid}")
-    print(f"AP MAC: {ap_mac}")
-    print(f"STA MAC: {sta_mac}")
-    print(f"ANonce: {to_hex(anonce)}")
-    print(f"SNonce: {to_hex(snonce)}")
-    print(f"Key MIC: {to_hex(key_mic)}")
+        if pkt.haslayer(EAPOL):
+            eapol_pkt = pkt[EAPOL]
+            if eapol_pkt.type == 3:  # Key message
+                key_data = eapol_pkt.load
+                if len(key_data) > 0:
+                    key_mic = key_data[-16:]
+                    if not anonce:
+                        anonce = key_data[13:45]
+                    if not snonce:
+                        snonce = key_data[45:77]
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract WPA handshake information from a PCAP file")
-    parser.add_argument("pcap_file", help="Path to the PCAP file")
+    return ssid, bssid, ap_mac, sta_mac, key_mic, anonce, snonce
+
+def main():
+    parser = argparse.ArgumentParser(description='Extract WiFi handshake information from a pcap file.')
+    parser.add_argument('pcap_file', help='The path to the pcap or .cap file')
     args = parser.parse_args()
 
-    extract_info(args.pcap_file)
+    ssid, bssid, ap_mac, sta_mac, key_mic, anonce, snonce = extract_info(args.pcap_file)
+    
+    print(f'SSID: {ssid}')
+    print(f'BSSID: {bssid}')
+    print(f'AP MAC: {ap_mac}')
+    print(f'STA MAC: {sta_mac}')
+    print(f'Key MIC: {key_mic.hex()}')
+    print(f'ANonce: {anonce.hex()}')
+    print(f'SNonce: {snonce.hex()}')
+
+if __name__ == '__main__':
+    main()
