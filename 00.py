@@ -14,6 +14,11 @@ if len(sys.argv) > 3: mac_ap = bytes.fromhex("".join(sys.argv[3].replace("-", ":
 if len(sys.argv) > 4: mac_cl = bytes.fromhex("".join(sys.argv[4].replace("-", ":").split(":")))
 if len(sys.argv) > 5: passlist_src=sys.argv[5]
 
+# Ensure MAC addresses are 6 bytes long
+if len(mac_ap) != 6 or len(mac_cl) != 6:
+    print("Error: MAC addresses must be 6 bytes long.")
+    sys.exit(1)
+
 # Read passlist.txt into a python list
 with open(passlist_src, 'r') as f:
   passlist = f.read().splitlines()
