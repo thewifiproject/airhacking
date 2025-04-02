@@ -1,5 +1,5 @@
 import argparse
-from scapy.all import rdpcap, Dot11Beacon, Dot11, Dot11Elt
+from scapy.all import rdpcap, Dot11, EAPOL
 
 def extract_pmkid(pcap_file):
     packets = rdpcap(pcap_file)
@@ -7,14 +7,12 @@ def extract_pmkid(pcap_file):
     
     for pkt in packets:
         if pkt.haslayer(Dot11):
-            if pkt.haslayer(Dot11Beacon) or (pkt.haslayer(Dot11Elt) and pkt.type == 0 and pkt.subtype == 8):
-                ap_mac = pkt.addr2  # AP MAC Address
+            ap_mac = pkt.addr2  # AP MAC Address
+            sta_mac = pkt.addr1  # STA MAC Address
             
-            if pkt.haslayer(Dot11Elt) and pkt.type == 2 and pkt.subtype == 0:
-                sta_mac = pkt.addr1  # STA MAC Address
-                
+            if pkt.haslayer(EAPOL):
                 raw_data = bytes(pkt)
-                if len(raw_data) >= 86:  # Check for PMKID existence
+                if len(raw_data) >= 0x76:  # Checking for PMKID presence
                     pmkid = raw_data[-16:].hex()
                     pmkid_list.append((ap_mac, sta_mac, pmkid))
     
