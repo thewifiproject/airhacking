@@ -1,6 +1,3 @@
-import argparse
-from scapy.all import rdpcap, Dot11, EAPOL
-
 def extract_handshake_info(pcap_file):
     # Read the pcap file
     packets = rdpcap(pcap_file)
@@ -20,6 +17,10 @@ def extract_handshake_info(pcap_file):
     for pkt in packets:
         # Check if packet is a Dot11 (Wi-Fi frame)
         if pkt.haslayer(Dot11):
+            # Print out EAPOL packets to check for presence of WPA handshake
+            if pkt.haslayer(EAPOL):
+                print(pkt.summary())  # Print summary of the packet for debugging
+
             # Extract SSID and BSSID
             if pkt.type == 0 and pkt.subtype == 8:  # Beacon frame (SSID and BSSID)
                 ssid = pkt.info.decode(errors='ignore')  # Extract SSID
@@ -52,12 +53,3 @@ def extract_handshake_info(pcap_file):
         print("Key MIC (from Message 2):", key_mic.hex())
     else:
         print("Could not extract the required information from the handshake.")
-
-if __name__ == '__main__':
-    # Set up argument parsing
-    parser = argparse.ArgumentParser(description="Extract WPA Handshake Information from a .pcap file")
-    parser.add_argument('pcap_file', metavar='file', type=str, help="Path to the .pcap file")
-    args = parser.parse_args()
-
-    # Extract information from the provided pcap file
-    extract_handshake_info(args.pcap_file)
