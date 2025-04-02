@@ -28,14 +28,14 @@ def extract_eapol_info(pcap_file):
                 if bssid in networks:
                     networks[bssid]['sta_mac'] = sta_mac
                     if hasattr(eapol.payload, 'key_info'):
-                        print(f"Found EAPOL Key Info: {eapol.payload.key_info}")
-                        if eapol.payload.key_info & 0x8:  # Message 2
-                            networks[bssid]['snonce'] = eapol.payload.load[13:45].hex()
-                            networks[bssid]['key_mic'] = eapol.payload.load[77:93].hex()
-                            print(f"Extracted SNonce: {networks[bssid]['snonce']}, Key MIC: {networks[bssid]['key_mic']}")
-                        if eapol.payload.key_info & 0x1:  # Message 3
-                            networks[bssid]['anonce'] = eapol.payload.load[13:45].hex()
-                            print(f"Extracted ANonce: {networks[bssid]['anonce']}")
+                        key_info = eapol.payload.key_info
+                        nonce = eapol.payload.load[13:45].hex()
+                        key_mic = eapol.payload.load[77:93].hex()
+                        if key_info & 0x8:  # Message 2
+                            networks[bssid]['snonce'] = nonce
+                            networks[bssid]['key_mic'] = key_mic
+                        if key_info & 0x1:  # Message 3
+                            networks[bssid]['anonce'] = nonce
 
     # If more than 2 networks are found, prompt the user to select one
     if len(networks) > 2:
