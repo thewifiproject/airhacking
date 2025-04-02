@@ -457,7 +457,7 @@ def main():
 
         else:
             numstates = 0
-            total_tested_keys =        
+            total_tested_keys = 0       
         else:
             numstates = 0
             total_tested_keys = 0
