@@ -455,9 +455,6 @@ def main():
                 progress.close()
                 print(f'[+] Finished in {round(finish-start, 2)} second(s)')
 
-                else:
-            numstates = 0
-            total_tested_keys = 0       
         else:
             numstates = 0
             total_tested_keys = 0
