@@ -3,7 +3,6 @@ import copy
 import numpy as np
 from scapy.all import rdpcap
 import sys
-import time
 
 # Constants
 ARP_HEADER = bytes.fromhex("AAAA030000000806")
@@ -294,7 +293,7 @@ def addsession(state, iv, keystream):
         state.packets_collected += 1
         state.seen_iv[il] = state.seen_iv[il] | ir
         buf = guesskeybytes(iv, keystream, MAINKEYBYTES)
-        for i in range(0, MAINKEYBYTES):
+        for i in range(0, MAINKEYBYBYTES):
             state.table[i][buf[i]].votes += 1
 
         if state.sessions_collected < 10:
@@ -329,12 +328,6 @@ def printkey(key, keylen: int):
     formatted_key = ":".join(f"{byte:02X}" for byte in key[:keylen])
     print(f"KEY FOUND! [ {formatted_key} ]")
 
-def print_animation(total_tested_keys, total_ivs, keybytes):
-    print(f"Tested {total_tested_keys} keys (got {total_ivs} IVs)")
-    print("\n   KB    depth   byte(vote)")
-    for kb, depth, byte_votes in keybytes:
-        print(f"{kb:5} {depth:7} {byte_votes}")
-
 def isvalidpkt(pkt):
     return ((len(pkt[0]) == 86 or len(pkt[0]) == 68) and bytes(pkt[0])[0] == 8)
 
@@ -343,7 +336,6 @@ def main():
     parser.add_argument("capturefile", help="Path to the capture file")
     args = parser.parse_args()
 
-    print("Processing packets, could take a while")
     try:
         pcap = rdpcap(args.capturefile)
     except scapy.error.Scapy_Exception:
@@ -359,7 +351,6 @@ def main():
     try:
         for pkt in pcap:
             if isvalidpkt(pkt):
-                # Packet is ARP
                 currenttable = -1
                 for k in range(len(networktable)):
                     if networktable[k].bssid == pkt[0].addr2 and networktable[k].keyid == pkt[1].keyid:
@@ -367,8 +358,6 @@ def main():
 
                 if currenttable == -1:
                     # Allocate new table
-                    print("Allocating a new table")
-                    print("bssid = " + str(pkt[0].addr2) + " keyindex=" + str(pkt[1].keyid))
                     numstates += 1
                     networktable.append(network())
                     networktable[numstates-1].state = newattackstate()
@@ -377,7 +366,6 @@ def main():
                     currenttable = numstates - 1
 
                 iv = pkt[1].iv
-                # Get known plaintext
                 arp_known = ARP_HEADER
                 if pkt[0].addr1 == BROADCAST_MAC or pkt[0].addr3 == BROADCAST_MAC:
                     arp_known += ARP_REQUEST
@@ -388,10 +376,9 @@ def main():
                 addsession(networktable[currenttable].state, iv, keystream)
                 total_ivs += 1
 
-        print("Analyzing packets")
-        keybytes = []
         for k in range(len(networktable)):
-            print("bssid = " + str(networktable[k].bssid) + " keyindex=" + str(networktable[k].keyid) + " packets=" + str(networktable[k].state.packets_collected))
+            print(f"[{total_tested_keys}] Tested {total_tested_keys} keys (got {total_ivs} IVs)")
+
             if computekey(networktable[k].state, key, 5, KEYLIMIT / 10) == 1:
                 printkey(key, 5)
                 return
@@ -399,14 +386,8 @@ def main():
                 printkey(key, 13)
                 return
 
-            # Collect key bytes for animation
-            for i in range(MAINKEYBYTES):
-                depth = i
-                byte_votes = " ".join(f"{entry.b:02X}({entry.votes:5})" for entry in networktable[k].state.table[i][:10])
-                keybytes.append((i, depth, byte_votes))
-
-        total_tested_keys = sum([entry.votes for sublist in networktable[k].state.table for entry in sublist])
-        print_animation(total_tested_keys, total_ivs, keybytes)
+            print("Key not found")
+            return
 
     except Exception as e:
         print(e)
