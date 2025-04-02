@@ -31,11 +31,13 @@ def find_pw_chunk(pw_list, ssid, ap_mac, sta_mac, captured_pmkid, stop_event, pr
         if pmkid == captured_pmkid:
             print(f"\nKEY FOUND! [ {password} ]")
             print(f"Master Key: {pmk.hex()}")
-            print(f"Transient Key: {pmk.hex()}")  # Assuming Transient Key is same as PMK
-            print(f"EAPOL HMAC: {pmkid.hex()}")
+            # Setting Transient Key and EAPOL HMAC to all zeros
+            transient_key = "00" * 32
+            eapol_hmac = "00" * 16
+            print(f"Transient Key: {transient_key}")
+            print(f"EAPOL HMAC: {eapol_hmac}")
             stop_event.set()
         progress.update(1)
-
 
 def extract_pmkid(pcap_file):
     packets = rdpcap(pcap_file)
