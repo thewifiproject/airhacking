@@ -1,6 +1,6 @@
 import argparse
 from scapy.all import *
-from scapy.layers.dot11 import Dot11, Dot11Auth, Dot11AssoReq, Dot11ReassocReq, Dot11Elt
+from scapy.layers.dot11 import Dot11, Dot11Auth, Dot11Elt
 
 def extract_info(pcap_file):
     # Read the pcap file
