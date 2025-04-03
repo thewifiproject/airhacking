@@ -1,7 +1,7 @@
 import sys
 from scapy.all import *
 
-def extract_mic_and_nonce(input_file):
+def extract_mic_and_nonce_and_ssid(input_file):
     packets = rdpcap(input_file)
     
     snonce = None
@@ -9,6 +9,7 @@ def extract_mic_and_nonce(input_file):
     sta_mac = None
     bssid = None
     anonce = None
+    ssid = None
 
     for packet in packets:
         if packet.haslayer(EAPOL):
@@ -37,6 +38,11 @@ def extract_mic_and_nonce(input_file):
             if mic and snonce and sta_mac and bssid and anonce:
                 break
 
+        # Extract SSID from Beacon packets
+        if packet.haslayer(Dot11Beacon) and not ssid:
+            ssid = packet.info.decode()
+            print(f"Extracted SSID: {ssid}")
+
     if not snonce:
         print("No SNonce found in Message 2 of 4.")
     if not mic:
@@ -47,6 +53,8 @@ def extract_mic_and_nonce(input_file):
         print("No BSSID found.")
     if not anonce:
         print("No ANonce found in Message 3 of 4.")
+    if not ssid:
+        print("No SSID found.")
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -54,4 +62,4 @@ if __name__ == '__main__':
         sys.exit(1)
 
     input_file = sys.argv[1]
-    extract_mic_and_nonce(input_file)
+    extract_mic_and_nonce_and_ssid(input_file)
