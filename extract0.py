@@ -19,7 +19,7 @@ def extract_mic_and_nonce(input_file):
                     print(f"Extracted SNonce: {snonce.hex()}")
                 return mic.hex()
             # Check if it's a Key (Message 3 of 4)
-            elif eapol_layer.type == 3 and not eapol_layer.key_mic:
+            if eapol_layer.type == 3 and not eapol_layer.key_mic:
                 anonce = eapol_layer.key_nonce
                 print(f"Extracted ANonce: {anonce.hex()}")
 
