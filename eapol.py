@@ -10,16 +10,15 @@ def extract_mic_and_nonce(input_file):
     for packet in packets:
         if packet.haslayer(EAPOL):
             eapol_layer = packet.getlayer(EAPOL)
-            # Check if it's a Key (Message 2 of 4) or Message 3 of 4
+            # Check if it's a Key (Message 2 of 4)
             if eapol_layer.type == 3 and eapol_layer.key_mic:
                 mic = eapol_layer.key_mic
                 print(f"Extracted MIC: {mic.hex()}")
                 if not snonce:
                     snonce = eapol_layer.key_nonce
                     print(f"Extracted SNonce: {snonce.hex()}")
-                return mic.hex()
             # Check if it's a Key (Message 3 of 4)
-            if eapol_layer.type == 3 and not eapol_layer.key_mic:
+            elif eapol_layer.type == 3 and not eapol_layer.key_mic:
                 anonce = eapol_layer.key_nonce
                 print(f"Extracted ANonce: {anonce.hex()}")
 
