@@ -8,6 +8,8 @@ def extract_mic_and_nonce(input_file):
     mic = None
     sta_mac = None
     bssid = None
+    essid = None
+    anonce = None
 
     for packet in packets:
         if packet.haslayer(EAPOL):
@@ -20,6 +22,14 @@ def extract_mic_and_nonce(input_file):
                     snonce = eapol_layer.key_nonce
                     print(f"Extracted SNonce: {snonce.hex()}")
 
+            # Check if it's a Key (Message 3 of 4) to extract ANonce and ESSID
+            if eapol_layer.type == 3 and eapol_layer.key_ack and not anonce:
+                anonce = eapol_layer.key_nonce
+                print(f"Extracted ANonce: {anonce.hex()}")
+                if packet.haslayer(Dot11Beacon):
+                    essid = packet[Dot11Elt].info.decode()
+                    print(f"Extracted ESSID: {essid}")
+
             # Extract STA MAC and BSSID
             if not sta_mac or not bssid:
                 sta_mac = packet.addr2
@@ -28,7 +38,7 @@ def extract_mic_and_nonce(input_file):
                 print(f"Extracted BSSID: {bssid}")
 
             # Break the loop if all values are found
-            if mic and snonce and sta_mac and bssid:
+            if mic and snonce and sta_mac and bssid and essid and anonce:
                 break
 
     if not snonce:
@@ -39,6 +49,10 @@ def extract_mic_and_nonce(input_file):
         print("No STA MAC found.")
     if not bssid:
         print("No BSSID found.")
+    if not essid:
+        print("No ESSID found.")
+    if not anonce:
+        print("No ANonce found in Message 3 of 4.")
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
