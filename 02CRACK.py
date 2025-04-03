@@ -14,7 +14,7 @@ def extract_wpa_key_mic_from_message_2(packets):
                     break  # We only want to extract from Message 2
 
 def main():
-    pcap_file = "wpa.cap"
+    pcap_file = "SHAK.cap"
     packets = rdpcap(pcap_file)
     extract_wpa_key_mic_from_message_2(packets)
 
