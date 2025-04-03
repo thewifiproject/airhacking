@@ -1,8 +1,8 @@
 import sys
-import binascii
-import hashlib
 import hmac
+import hashlib
 from scapy.all import rdpcap, EAPOL, Dot11Beacon
+import binascii
 import argparse
 
 def extract_mic_and_nonce_and_ssid(input_file):
@@ -14,7 +14,7 @@ def extract_mic_and_nonce_and_ssid(input_file):
     bssid = None
     anonce = None
     ssid = None
-    
+
     for packet in packets:
         if packet.haslayer(EAPOL):
             eapol_layer = packet.getlayer(EAPOL)
@@ -47,45 +47,67 @@ def extract_mic_and_nonce_and_ssid(input_file):
             ssid = packet.info.decode()
             print(f"Extracted SSID: {ssid}")
 
+    if not snonce:
+        print("No SNonce found in Message 2 of 4.")
+    if not mic:
+        print("No MIC found.")
+    if not sta_mac:
+        print("No STA MAC found.")
+    if not bssid:
+        print("No BSSID found.")
+    if not anonce:
+        print("No ANonce found in Message 3 of 4.")
+    if not ssid:
+        print("No SSID found.")
+
     return mic, snonce, sta_mac, bssid, anonce, ssid
 
-def pbkdf2_f(hash_name, password, ssid, iterations, dklen):
-    dk = hashlib.pbkdf2_hmac(hash_name, password.encode(), ssid.encode(), iterations, dklen)
-    return dk
+def crack_psk(mic, snonce, sta_mac, bssid, anonce, ssid, wordlist):
+    ssid = ssid.encode()
+    sta_mac = binascii.unhexlify(sta_mac.replace(':', ''))
+    bssid = binascii.unhexlify(bssid.replace(':', ''))
+    mic = binascii.unhexlify(mic.hex())
+    
+    # Generate PMK (Pre-Shared Key)
+    for word in wordlist:
+        word = word.strip()
+        print(f"Trying PSK: {word}")
+        psk = word.encode()
+        pmk = hashlib.pbkdf2_hmac('sha1', psk, ssid, 4096, 32)
+        print(f"PMK: {pmk.hex()}")
 
-def customPRF512(pmk, a, b):
-    blen = 64
-    i = 0
-    R = b''
-    while i <= ((blen * 8 + 159) / 160):
-        hmacsha1 = hmac.new(pmk, a + chr(0x00).encode() + b + chr(i).encode(), hashlib.sha1)
-        R = R + hmacsha1.digest()
-        i += 1
-    return R[:blen]
+        # Key Derivation: Generate PTK from PMK, ANonce, SNonce, and MAC addresses
+        ptk = hmac.new(pmk, b'\x00' * 16 + anonce + sta_mac + bssid + snonce + sta_mac + bssid, hashlib.sha1).digest()[:16]
+        print(f"PTK: {ptk.hex()}")
 
-def crack_psk(wordlist_file, mic, snonce, sta_mac, bssid, anonce, ssid):
-    with open(wordlist_file, 'r') as f:
-        for word in f:
-            word = word.strip()
-            pmk = pbkdf2_f('sha1', word, ssid, 4096, 32)
-            a = b"Pairwise key expansion"
-            b = min(sta_mac, bssid) + max(sta_mac, bssid) + min(anonce, snonce) + max(anonce, snonce)
-            ptk = customPRF512(pmk, a, b)
-            mic_to_test = hmac.new(ptk[0:16], mic, hashlib.sha1)
-            if mic_to_test.digest() == mic:
-                print(f"Cracked PSK: {word}")
-                return word
-    print("Failed to crack PSK.")
+        # MIC Calculation: Calculate the MIC using the PTK and the second part of the MIC from the capture
+        mic_calc = hmac.new(ptk, b'\x01\x03\x00\x75\x00\x00\x00\x00' + mic[18:], hashlib.sha1).digest()[:16]
+        print(f"Calculated MIC: {mic_calc.hex()}")
+
+        # Check if the calculated MIC matches the extracted MIC
+        if mic_calc == mic:
+            print(f"Correct PSK found: {word}")
+            return word
+
+    print("No valid PSK found in wordlist.")
     return None
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Crack WPA PSK using aircrack logic.')
-    parser.add_argument('capture_file', type=str, help='Path to the capture file (CAP/PCAP)')
-    parser.add_argument('-P', '--wordlist', type=str, required=True, help='Path to the wordlist file')
+    parser = argparse.ArgumentParser(description='Crack WPA PSK using aircrack.py')
+    parser.add_argument('capture_file', help='Capture file (CAP/PCAP)')
+    parser.add_argument('-P', '--wordlist', required=True, help='Wordlist file')
+    
     args = parser.parse_args()
+    capture_file = args.capture_file
+    wordlist_file = args.wordlist
 
-    mic, snonce, sta_mac, bssid, anonce, ssid = extract_mic_and_nonce_and_ssid(args.capture_file)
+    # Extract MIC, nonces, MAC addresses, and SSID from the capture
+    mic, snonce, sta_mac, bssid, anonce, ssid = extract_mic_and_nonce_and_ssid(capture_file)
+    
     if mic and snonce and sta_mac and bssid and anonce and ssid:
-        crack_psk(args.wordlist, mic, snonce, sta_mac, bssid, anonce, ssid)
+        # Read the wordlist and attempt to crack the PSK
+        with open(wordlist_file, 'r') as f:
+            wordlist = f.readlines()
+        crack_psk(mic, snonce, sta_mac, bssid, anonce, ssid, wordlist)
     else:
-        print("Failed to extract necessary information from capture file.")
+        print("Failed to extract necessary values from capture file.")
