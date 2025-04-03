@@ -5,11 +5,9 @@ def extract_mic_and_nonce(input_file):
     packets = rdpcap(input_file)
     
     snonce = None
-    anonce = None
     mic = None
     sta_mac = None
     bssid = None
-    ssid = None
 
     for packet in packets:
         if packet.haslayer(EAPOL):
@@ -21,10 +19,6 @@ def extract_mic_and_nonce(input_file):
                 if not snonce:
                     snonce = eapol_layer.key_nonce
                     print(f"Extracted SNonce: {snonce.hex()}")
-            # Check if it's a Key (Message 3 of 4)
-            elif eapol_layer.type == 3 and not eapol_layer.key_mic and not anonce:
-                anonce = eapol_layer.key_nonce
-                print(f"Extracted ANonce: {anonce.hex()}")
 
             # Extract STA MAC and BSSID
             if not sta_mac or not bssid:
@@ -33,26 +27,18 @@ def extract_mic_and_nonce(input_file):
                 print(f"Extracted STA MAC: {sta_mac}")
                 print(f"Extracted BSSID: {bssid}")
 
-            # Extract SSID
-            if packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp):
-                if not ssid:
-                    ssid = packet.info.decode()
-                    print(f"Extracted SSID: {ssid}")
-
             # Break the loop if all values are found
-            if mic and snonce and anonce and sta_mac and bssid and ssid:
+            if mic and snonce and sta_mac and bssid:
                 break
 
     if not snonce:
         print("No SNonce found in Message 2 of 4.")
-    if not anonce:
-        print("No ANonce found in Message 3 of 4.")
+    if not mic:
+        print("No MIC found.")
     if not sta_mac:
         print("No STA MAC found.")
     if not bssid:
         print("No BSSID found.")
-    if not ssid:
-        print("No SSID found.")
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
