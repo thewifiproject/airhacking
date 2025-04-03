@@ -1,11 +1,10 @@
 import sys
 from scapy.all import *
 
-def extract_mic_and_nonces(input_file):
+def extract_mic_and_nonce(input_file):
     packets = rdpcap(input_file)
     
     snonce = None
-    anonce = None
 
     for packet in packets:
         if packet.haslayer(EAPOL):
@@ -19,17 +18,9 @@ def extract_mic_and_nonces(input_file):
                     print(f"Extracted SNonce: {snonce.hex()}")
                 return mic.hex()
 
-            # Check if it's Message 3 of 4
-            if eapol_layer.type == 3 and not eapol_layer.key_mic and not eapol_layer.key_ack:
-                if not anonce:
-                    anonce = eapol_layer.key_nonce
-                    print(f"Extracted ANonce: {anonce.hex()}")
-
     if not snonce:
         print("No SNonce found in Message 2 of 4.")
-    if not anonce:
-        print("No ANonce found in Message 3 of 4.")
-    return None
+
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -37,4 +28,4 @@ if __name__ == '__main__':
         sys.exit(1)
 
     input_file = sys.argv[1]
-    extract_mic_and_nonces(input_file)
+    extract_mic_and_nonce(input_file)
