@@ -352,41 +352,54 @@ def main():
     numstates = 0
     total_tested_keys = 0
     total_ivs = 0
+
     try:
         for pkt in pcap:
-            if isvalidpkt(pkt):
-                # Packet is ARP
-                currenttable = -1
-                for k in range(len(networktable)):
-                    if networktable[k].bssid == pkt[0].addr2 and networktable[k].keyid == pkt[1].keyid:
-                        currenttable = k
+            if not isvalidpkt(pkt):
+                continue  # Skip invalid packets
 
-                if currenttable == -1:
-                    # Allocate new table
-                    print("Allocating a new table")
-                    print(f"bssid = {pkt[0].addr2} keyindex = {pkt[1].keyid}")
-                    numstates += 1
-                    networktable.append(network())
-                    networktable[numstates-1].state = newattackstate()
-                    networktable[numstates-1].bssid = pkt[0].addr2
-                    networktable[numstates-1].keyid = pkt[1].keyid
-                    currenttable = numstates - 1
+            # Ensure the packet has enough layers
+            if len(pkt) < 2 or not hasattr(pkt[1], "iv") or not hasattr(pkt[1], "wepdata"):
+                continue  # Skip if necessary fields are missing
 
-                iv = pkt[1].iv
-                # Get known plaintext
-                arp_known = ARP_HEADER
-                if pkt[0].addr1 == BROADCAST_MAC or pkt[0].addr3 == BROADCAST_MAC:
-                    arp_known += ARP_REQUEST
-                else:
-                    arp_known += ARP_RESPONSE
+            currenttable = -1
+            for k in range(len(networktable)):
+                if (
+                    hasattr(pkt[0], "addr2")
+                    and hasattr(pkt[1], "keyid")
+                    and networktable[k].bssid == pkt[0].addr2
+                    and networktable[k].keyid == pkt[1].keyid
+                ):
+                    currenttable = k
 
-                keystream = GetKeystream(pkt[1].wepdata, arp_known)
-                addsession(networktable[currenttable].state, iv, keystream)
-                total_ivs += 1
+            if currenttable == -1 and hasattr(pkt[0], "addr2") and hasattr(pkt[1], "keyid"):
+                # Allocate new table
+                print(f"Allocating a new table for BSSID = {pkt[0].addr2}, key index = {pkt[1].keyid}")
+                numstates += 1
+                networktable.append(network())
+                networktable[numstates - 1].state = newattackstate()
+                networktable[numstates - 1].bssid = pkt[0].addr2
+                networktable[numstates - 1].keyid = pkt[1].keyid
+                currenttable = numstates - 1
+
+            if currenttable == -1:
+                continue  # Skip if no valid table was found or created
+
+            iv = pkt[1].iv
+            # Get known plaintext
+            arp_known = ARP_HEADER
+            if pkt[0].addr1 == BROADCAST_MAC or pkt[0].addr3 == BROADCAST_MAC:
+                arp_known += ARP_REQUEST
+            else:
+                arp_known += ARP_RESPONSE
+
+            keystream = GetKeystream(pkt[1].wepdata, arp_known)
+            addsession(networktable[currenttable].state, iv, keystream)
+            total_ivs += 1
 
         print("Analyzing packets")
         for k in range(len(networktable)):
-            print(f"bssid = {networktable[k].bssid} keyindex = {networktable[k].keyid} packets = {networktable[k].state.packets_collected}")
+            print(f"BSSID = {networktable[k].bssid}, Key Index = {networktable[k].keyid}, Packets = {networktable[k].state.packets_collected}")
             
             for key_len in KEY_LENGTHS:
                 print(f"Checking for {key_len * 8}-bit key")
@@ -397,16 +410,12 @@ def main():
             print("Key not found")
 
     except Exception as e:
-        print(e)
+        print(f"Error: {e}")
 
     print(f"[{total_tested_keys}] Tested {total_tested_keys} keys (got {total_ivs} IVs)")
 
 networktable = []
 key = [None] * max(KEY_LENGTHS)  # Adjusted for the longest key size
-
-if __name__ == "__main__":
-    main()
-
 
 if __name__ == "__main__":
     main()
