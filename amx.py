@@ -331,6 +331,9 @@ def printkey(key, keylen: int):
 def isvalidpkt(pkt):
     return ((len(pkt[0]) == 86 or len(pkt[0]) == 68) and bytes(pkt[0])[0] == 8)
 
+# Supported key lengths in bytes: 40-bit (5), 64-bit (8), 104-bit (13), 128-bit (16), 152-bit (19), 256-bit (32)
+KEY_LENGTHS = [5, 8, 13, 16, 19, 32]
+
 def main():
     parser = argparse.ArgumentParser(description="PTW Attack Implementation")
     parser.add_argument("capturefile", help="Path to the capture file")
@@ -361,7 +364,7 @@ def main():
                 if currenttable == -1:
                     # Allocate new table
                     print("Allocating a new table")
-                    print("bssid = " + str(pkt[0].addr2) + " keyindex=" + str(pkt[1].keyid))
+                    print(f"bssid = {pkt[0].addr2} keyindex = {pkt[1].keyid}")
                     numstates += 1
                     networktable.append(network())
                     networktable[numstates-1].state = newattackstate()
@@ -383,18 +386,15 @@ def main():
 
         print("Analyzing packets")
         for k in range(len(networktable)):
-            print("bssid = " + str(networktable[k].bssid) + " keyindex=" + str(networktable[k].keyid) + " packets=" + str(networktable[k].state.packets_collected))
-            print("Checking for 40-bit key")
-            if computekey(networktable[k].state, key, 5, KEYLIMIT / 10) == 1:
-                printkey(key, 5)
-                return
-            print("Checking for 104-bit key")
-            if computekey(networktable[k].state, key, 13, KEYLIMIT) == 1:
-                printkey(key, 13)
-                return
+            print(f"bssid = {networktable[k].bssid} keyindex = {networktable[k].keyid} packets = {networktable[k].state.packets_collected}")
+            
+            for key_len in KEY_LENGTHS:
+                print(f"Checking for {key_len * 8}-bit key")
+                if computekey(networktable[k].state, key, key_len, KEYLIMIT // 10 if key_len < 13 else KEYLIMIT):
+                    printkey(key, key_len)
+                    return
 
             print("Key not found")
-            return
 
     except Exception as e:
         print(e)
@@ -402,7 +402,11 @@ def main():
     print(f"[{total_tested_keys}] Tested {total_tested_keys} keys (got {total_ivs} IVs)")
 
 networktable = []
-key = [None] * MAINKEYBYTES
+key = [None] * max(KEY_LENGTHS)  # Adjusted for the longest key size
+
+if __name__ == "__main__":
+    main()
+
 
 if __name__ == "__main__":
     main()
