@@ -56,11 +56,16 @@ def scan_networks(interface, stdscr):
         if pkt.haslayer(scapy.Dot11Beacon):
             ssid = pkt[scapy.Dot11Elt].info.decode(errors='ignore') if pkt.haslayer(scapy.Dot11Elt) else 'HIDDEN'
             bssid = pkt[scapy.Dot11].addr2
-            cap = pkt.sprintf("{Dot11Beacon:%Dot11Beacon.cap%}")
-            if pkt.haslayer(scapy.Dot11EltRSN) or "WPA" in cap or "privacy" in cap.lower():
-                security = "WPA"
+            # Check security type and display WEP, WPA, or WPA2
+            if 'WEP' in pkt.sprintf('%Dot11Beacon.cap%'):
+                security = 'WEP'
+            elif 'WPA' in pkt.sprintf('%Dot11Beacon.cap%'):
+                security = 'WPA'
+            elif 'WPA2' in pkt.sprintf('%Dot11Beacon.cap%'):
+                security = 'WPA'
             else:
-                security = "Open"
+                security = 'Open'
+
             channel = pkt[scapy.Dot11Elt:3].info.decode(errors='ignore') if pkt.haslayer(scapy.Dot11Elt) else 'N/A'
             signal = pkt.dBm_AntSignal if hasattr(pkt, 'dBm_AntSignal') else -100
 
