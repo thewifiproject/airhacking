@@ -16,24 +16,23 @@ channel = None
 bssid_filter = None
 scanning_thread = None
 stop_scanning = False  # Flag to control the scanning thread
+current_hopping_channel = None  # Global variable to track the current channel for hopping
 
 # Function to handle channel hopping
-def channel_hopper(interface, stdscr):
-    global stop_scanning
+def channel_hopper(interface):
+    global stop_scanning, current_hopping_channel
     channel_list = [1, 6, 11]  # Add more channels as needed
     current_channel_index = 0
 
     while not stop_scanning:
-        current_channel = channel_list[current_channel_index]
-        os.system(f"iw dev {interface} set channel {current_channel}")
-        stdscr.addstr(1, 0, f"CH: {current_channel}", curses.A_BOLD)  # Print the current channel
-        stdscr.refresh()
+        current_hopping_channel = channel_list[current_channel_index]
+        os.system(f"iw dev {interface} set channel {current_hopping_channel}")
         current_channel_index = (current_channel_index + 1) % len(channel_list)
         time.sleep(0.5)  # Adjust the delay as needed
 
 # Function to handle the network sniffing and scanning
 def scan_networks(interface, stdscr):
-    global networks, stations, handshake_frames, capture_name, channel, bssid_filter, stop_scanning
+    global networks, stations, handshake_frames, capture_name, channel, bssid_filter, stop_scanning, current_hopping_channel
 
     # Check if the interface starts with "wlan"
     if not interface.startswith("wlan"):
@@ -50,7 +49,7 @@ def scan_networks(interface, stdscr):
     scapy.conf.promisc = True
 
     # Start the channel hopper in a separate thread
-    threading.Thread(target=channel_hopper, args=(interface, stdscr), daemon=True).start()
+    threading.Thread(target=channel_hopper, args=(interface,), daemon=True).start()
 
     def packet_handler(pkt):
         global networks, stations, handshake_frames
@@ -72,10 +71,8 @@ def scan_networks(interface, stdscr):
                 })
                 stations = []
 
-            # Dynamic terminal output using curses
-            stdscr.clear()
+            # Update the screen with networks
             print_networks(stdscr)
-            stdscr.refresh()
 
         elif pkt.haslayer(scapy.EAPOL):  # Capture EAPOL frames (handshakes)
             print(f"[EAPOL] Captured EAPOL frame from BSSID: {pkt[scapy.Dot11].addr2}")
@@ -89,23 +86,23 @@ def scan_networks(interface, stdscr):
     def print_networks(stdscr):
         max_y, max_x = stdscr.getmaxyx()
 
-        # Print networks in a table format
-        stdscr.addstr(0, 0, f"Networks (Ctrl+C to exit) - Capturing on: {interface}", curses.A_BOLD)
-        stdscr.addstr(2, 0, "SSID          BSSID                Security  Channel Signal  WPS")
-        stdscr.addstr(3, 0, "-" * (max_x - 1))
+        # Print the current hopping channel above the networks' table
+        if current_hopping_channel is not None:
+            stdscr.addstr(0, 0, f"[ CH ({current_hopping_channel}) ]", curses.A_BOLD)
 
-        y_offset = 4
+        # Print networks in a table format
+        stdscr.addstr(2, 0, f"Networks (Ctrl+C to exit) - Capturing on: {interface}", curses.A_BOLD)
+        stdscr.addstr(4, 0, "SSID          BSSID                Security  Channel Signal  WPS")
+        stdscr.addstr(5, 0, "-" * (max_x - 1))
+
+        y_offset = 6
         for net in networks:
+            if y_offset >= max_y - 2:
+                break  # Prevent overflow of the screen
             stdscr.addstr(y_offset, 0, f"{net['SSID']: <15} {net['BSSID']: <18} {net['Security']: <8} {net['Channel']: <7} {net['Signal']: <7} {net['WPS']}")
             y_offset += 1
 
-        # Print stations information
-        if len(stations) > 0:
-            stdscr.addstr(y_offset, 0, "Stations:")
-            y_offset += 1
-            for station in stations:
-                stdscr.addstr(y_offset, 0, f"MAC: {station['MAC']} Channel: {station['Channel']} Signal: {station['Signal']}")
-                y_offset += 1
+        stdscr.refresh()
 
     # Start sniffing, with a condition to stop based on the flag
     while not stop_scanning:
