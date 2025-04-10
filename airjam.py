@@ -4,7 +4,7 @@ from scapy.all import *
 
 def send_deauth(interface, bssid, stamac=None, count=None):
     if stamac:
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Attacking... Code: 1. STMAC: {stamac}")
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Attacking... STMAC: {stamac}")
     else:
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Attacking... Sending to broadcast - BSSID {bssid}")
 
