@@ -17,6 +17,20 @@ bssid_filter = None
 scanning_thread = None
 stop_scanning = False  # Flag to control the scanning thread
 
+# Function to handle channel hopping
+def channel_hopper(interface, stdscr):
+    global stop_scanning
+    channel_list = [1, 6, 11]  # Add more channels as needed
+    current_channel_index = 0
+
+    while not stop_scanning:
+        current_channel = channel_list[current_channel_index]
+        os.system(f"iw dev {interface} set channel {current_channel}")
+        stdscr.addstr(1, 0, f"CH: {current_channel}", curses.A_BOLD)  # Print the current channel
+        stdscr.refresh()
+        current_channel_index = (current_channel_index + 1) % len(channel_list)
+        time.sleep(0.5)  # Adjust the delay as needed
+
 # Function to handle the network sniffing and scanning
 def scan_networks(interface, stdscr):
     global networks, stations, handshake_frames, capture_name, channel, bssid_filter, stop_scanning
@@ -35,12 +49,15 @@ def scan_networks(interface, stdscr):
     scapy.conf.iface = interface
     scapy.conf.promisc = True
 
+    # Start the channel hopper in a separate thread
+    threading.Thread(target=channel_hopper, args=(interface, stdscr), daemon=True).start()
+
     def packet_handler(pkt):
         global networks, stations, handshake_frames
         if pkt.haslayer(scapy.Dot11Beacon):
             ssid = pkt[scapy.Dot11Elt].info.decode(errors='ignore') if pkt.haslayer(scapy.Dot11Elt) else 'HIDDEN'
             bssid = pkt[scapy.Dot11].addr2
-            security = 'WEP' if 'WEP' in pkt.sprintf('%Dot11Beacon.cap%') else 'WPA' if 'WPA' in pkt.sprintf('%Dot11Beacon.cap%') else 'WPA2' if 'WPA2' in pkt.sprintf('%Dot11Beacon.cap%') else 'Unknow...'
+            security = 'WEP' if 'WEP' in pkt.sprintf('%Dot11Beacon.cap%') else 'WPA' if 'WPA' in pkt.sprintf('%Dot11Beacon.cap%') else 'WPA2' if 'WPA2' in pkt.sprintf('%Dot11Beacon.cap%') else 'Unknown'
             channel = pkt[scapy.Dot11Elt:3].info.decode(errors='ignore') if pkt.haslayer(scapy.Dot11Elt) else 'N/A'
             signal = pkt.dBm_AntSignal if hasattr(pkt, 'dBm_AntSignal') else -100
 
