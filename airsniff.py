@@ -7,138 +7,149 @@ import os
 import csv
 import signal
 
+# Global variables for captured data
 networks = []
-handshake_frames = []
+stations = []
+handshake_frames = []  # List to store captured EAPOL frames (handshakes)
 capture_name = ''
 channel = None
 bssid_filter = None
-stop_scanning = False
-current_hopping_channel = None
+scanning_thread = None
+stop_scanning = False  # Flag to control the scanning thread
+current_hopping_channel = None  # Global variable to track the current channel for hopping
 
+# Function to handle channel hopping
 def channel_hopper(interface):
     global stop_scanning, current_hopping_channel
-    channel_list = [1, 6, 11]  # You can expand this
-    index = 0
+    channel_list = [1, 6, 11]  # Add more channels as needed
+    current_channel_index = 0
+
     while not stop_scanning:
-        current_hopping_channel = channel_list[index]
+        current_hopping_channel = channel_list[current_channel_index]
         os.system(f"iw dev {interface} set channel {current_hopping_channel}")
-        index = (index + 1) % len(channel_list)
-        time.sleep(0.5)
+        current_channel_index = (current_channel_index + 1) % len(channel_list)
+        time.sleep(0.5)  # Adjust the delay as needed
 
-def extract_channel(pkt):
-    elt = pkt.getlayer(scapy.Dot11Elt)
-    while elt:
-        if elt.ID == 3:
-            return ord(elt.info)
-        elt = elt.payload.getlayer(scapy.Dot11Elt)
-    return 'N/A'
+# Function to handle the network sniffing and scanning
+def scan_networks(interface, stdscr):
+    global networks, stations, handshake_frames, capture_name, channel, bssid_filter, stop_scanning, current_hopping_channel
 
-def detect_security(pkt):
-    capabilities = pkt.sprintf("{Dot11Beacon:%Dot11Beacon.cap%}").lower()
-    if 'privacy' in capabilities:
-        if pkt.haslayer(scapy.Dot11EltRSN):
-            return 'WPA2'
-        else:
-            return 'WEP/WPA'
-    return 'Open'
+    # Check if the interface starts with "wlan"
+    if not interface.startswith("wlan"):
+        print(f"Wireless card '{interface}' not supported!")
+        return
 
-def packet_handler(pkt, stdscr, interface):
-    global networks, handshake_frames
+    # Check if the interface is in monitor mode
+    mode = os.popen(f"iwconfig {interface}").read()
+    if "Mode:Monitor" not in mode:
+        print(f"Monitor mode is not enabled on the wireless card '{interface}'!")
+        return
 
-    if pkt.haslayer(scapy.Dot11Beacon):
-        ssid = pkt[scapy.Dot11Elt].info.decode(errors='ignore') if pkt.haslayer(scapy.Dot11Elt) else 'HIDDEN'
-        bssid = pkt[scapy.Dot11].addr2
-        signal = pkt.dBm_AntSignal if hasattr(pkt, 'dBm_AntSignal') else -100
-        security = detect_security(pkt)
-        channel = extract_channel(pkt)
-        wps = 'YES' if 'wps' in pkt.sprintf('%Dot11Beacon.cap%').lower() else 'NO'
+    scapy.conf.iface = interface
+    scapy.conf.promisc = True
 
-        if bssid_filter is None or bssid_filter == bssid:
-            if not any(net['BSSID'] == bssid for net in networks):
+    # Start the channel hopper in a separate thread
+    threading.Thread(target=channel_hopper, args=(interface,), daemon=True).start()
+
+    def packet_handler(pkt):
+        global networks, stations, handshake_frames
+        if pkt.haslayer(scapy.Dot11Beacon):
+            ssid = pkt[scapy.Dot11Elt].info.decode(errors='ignore') if pkt.haslayer(scapy.Dot11Elt) else 'HIDDEN'
+            bssid = pkt[scapy.Dot11].addr2
+            cap = pkt.sprintf("{Dot11Beacon:%Dot11Beacon.cap%}")
+            if pkt.haslayer(scapy.Dot11EltRSN) or "WPA" in cap or "privacy" in cap.lower():
+                security = "WPA"
+            else:
+                security = "Open"
+            channel = pkt[scapy.Dot11Elt:3].info.decode(errors='ignore') if pkt.haslayer(scapy.Dot11Elt) else 'N/A'
+            signal = pkt.dBm_AntSignal if hasattr(pkt, 'dBm_AntSignal') else -100
+
+            if bssid_filter is None or bssid_filter == bssid:
                 networks.append({
                     'SSID': ssid,
                     'BSSID': bssid,
                     'Security': security,
                     'Channel': channel,
                     'Signal': signal,
-                    'WPS': wps
+                    'WPS': 'YES' if 'wps' in pkt.sprintf('%Dot11Beacon.cap%') else 'NO'
                 })
-                print_networks(stdscr, interface)
+                stations = []
 
-    elif pkt.haslayer(scapy.EAPOL):
-        bssid = pkt[scapy.Dot11].addr2
-        print(f"[EAPOL] Captured from {bssid}")
-        handshake_frames.append(pkt)
+            # Update the screen with networks
+            print_networks(stdscr)
 
-    elif pkt.haslayer(scapy.Dot11Auth):
-        if pkt[scapy.Dot11Auth].algo == 0x01:
-            print(f"[PMKID] Detected from {pkt[scapy.Dot11].addr2}")
+        elif pkt.haslayer(scapy.EAPOL):  # Capture EAPOL frames (handshakes)
+            print(f"[EAPOL] Captured EAPOL frame from BSSID: {pkt[scapy.Dot11].addr2}")
+            handshake_frames.append(pkt)  # Store the EAPOL frame
 
-def print_networks(stdscr, interface):
-    stdscr.clear()
-    max_y, max_x = stdscr.getmaxyx()
+        elif pkt.haslayer(scapy.Dot11Auth):  # Detect PMKID frames (for WPA attacks)
+            auth_pkt = pkt[scapy.Dot11Auth]
+            if auth_pkt.algo == 0x01:  # PMKID frame
+                print(f"[PMKID] Captured PMKID frame from BSSID: {pkt[scapy.Dot11].addr2}")
 
-    if current_hopping_channel is not None:
-        stdscr.addstr(0, 0, f"[ CH ({current_hopping_channel}) ]", curses.A_BOLD)
+    def print_networks(stdscr):
+        max_y, max_x = stdscr.getmaxyx()
 
-    stdscr.addstr(2, 0, f"Networks (Ctrl+C to exit) - Interface: {interface}", curses.A_BOLD)
-    stdscr.addstr(4, 0, "SSID          BSSID                Security    Channel Signal  WPS")
-    stdscr.addstr(5, 0, "-" * (max_x - 1))
+        # Print the current hopping channel above the networks' table
+        if current_hopping_channel is not None:
+            stdscr.addstr(0, 0, f"[ CH ({current_hopping_channel}) ]", curses.A_BOLD)
 
-    for i, net in enumerate(networks):
-        if 6 + i >= max_y - 1:
-            break
-        stdscr.addstr(6 + i, 0, f"{net['SSID']: <15} {net['BSSID']: <18} {net['Security']: <10} {net['Channel']: <7} {net['Signal']: <7} {net['WPS']}")
+        # Print networks in a table format
+        stdscr.addstr(2, 0, f"Networks (Ctrl+C to exit) - Capturing on: {interface}", curses.A_BOLD)
+        stdscr.addstr(4, 0, "SSID          BSSID                Security  Channel Signal  WPS")
+        stdscr.addstr(5, 0, "-" * (max_x - 1))
 
-    stdscr.refresh()
+        y_offset = 6
+        for net in networks:
+            if y_offset >= max_y - 2:
+                break  # Prevent overflow of the screen
+            stdscr.addstr(y_offset, 0, f"{net['SSID']: <15} {net['BSSID']: <18} {net['Security']: <8} {net['Channel']: <7} {net['Signal']: <7} {net['WPS']}")
+            y_offset += 1
 
-def scan_networks(interface, stdscr):
-    global stop_scanning
+        stdscr.refresh()
 
-    if not interface.startswith("wlan"):
-        print(f"Interface '{interface}' not supported.")
-        return
-
-    mode = os.popen(f"iwconfig {interface}").read()
-    if "Mode:Monitor" not in mode:
-        print(f"Interface '{interface}' is not in monitor mode.")
-        return
-
-    scapy.conf.iface = interface
-    scapy.conf.promisc = True
-
-    threading.Thread(target=channel_hopper, args=(interface,), daemon=True).start()
-
+    # Start sniffing, with a condition to stop based on the flag
     while not stop_scanning:
-        scapy.sniff(iface=interface, prn=lambda pkt: packet_handler(pkt, stdscr, interface), store=0, timeout=1)
+        scapy.sniff(iface=interface, prn=packet_handler, store=0, timeout=1, filter="wlan", count=0)
 
+# Function to save the captured handshakes to a file
 def save_handshake_capture(filename):
+    global handshake_frames
     if handshake_frames:
-        scapy.wrpcap(f"{filename}_handshake.cap", handshake_frames)
-        print(f"Handshake capture saved to {filename}_handshake.cap")
+        scapy.wrpcap(f"{filename}.cap", handshake_frames)
+        print(f"Handshake capture saved as {filename}.cap")
     else:
-        print("No handshake frames captured.")
+        print("No handshake captured.")
 
-def save_networks_csv(filename):
-    with open(f'{filename}.csv', 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['SSID', 'BSSID', 'Security', 'Channel', 'Signal', 'WPS'])
+# Function to save the capture to CSV and .cap file
+def save_capture(filename):
+    global networks, stations
+    # Save the networks information to a CSV file
+    with open(f'{filename}.csv', 'w', newline='') as csvfile:
+        fieldnames = ['SSID', 'BSSID', 'Security', 'Channel', 'Signal', 'WPS']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for net in networks:
             writer.writerow(net)
-    print(f"Network list saved to {filename}.csv")
 
+    # Save the packet capture as a .cap file
+    scapy.wrpcap(f"{filename}.cap", networks)
+
+# Argument parser setup
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="AirSniff - Wireless Network Scanner & Handshake Capturer")
-    parser.add_argument("interface", help="Wireless interface in monitor mode")
-    parser.add_argument("-c", "--channel", type=int, help="Set scanning channel")
-    parser.add_argument("-b", "--bssid", help="Filter by BSSID")
-    parser.add_argument("-o", "--output", default="capture", help="Output filename prefix")
+    parser = argparse.ArgumentParser(description="AirSniff")
+    parser.add_argument("interface", help="Interface to scan on")
+    parser.add_argument("-c", "--channel", help="Channel to scan", type=int)
+    parser.add_argument("-b", "--bssid", help="BSSID to filter", type=str)
+    parser.add_argument("-o", "--output", help="Output filename", default="capture")
     return parser.parse_args()
 
-def set_channel(interface, ch):
-    if ch:
-        os.system(f"iw dev {interface} set channel {ch}")
+# Function to change the channel
+def set_channel(interface, channel):
+    if channel:
+        os.system(f"iw dev {interface} set channel {channel}")
 
+# Thread to handle network scanning
 def start_scanning(stdscr):
     global capture_name, channel, bssid_filter, stop_scanning
     args = parse_arguments()
@@ -149,23 +160,30 @@ def start_scanning(stdscr):
 
     try:
         set_channel(args.interface, channel)
+    except Exception as e:
+        print(f"Error setting channel: {e}")
+        return
+
+    try:
         scan_networks(args.interface, stdscr)
     except KeyboardInterrupt:
         stop_scanning = True
-        save_networks_csv(capture_name)
-        save_handshake_capture(capture_name)
-        print("\nCapture complete. Exiting...")
+        save_capture(capture_name)
+        save_handshake_capture(capture_name)  # Save handshakes as well
+        print("\nCapture saved. Exiting...")
 
 def main():
     global stop_scanning
-    stop_scanning = False
+    stop_scanning = False  # Reset the stop flag at the start of the program
 
     def handler(signum, frame):
         global stop_scanning
         stop_scanning = True
 
-    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGINT, handler)  # Catch Ctrl+C
+
     curses.wrapper(start_scanning)
 
+# Run the tool
 if __name__ == "__main__":
     main()
