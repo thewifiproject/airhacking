@@ -10,11 +10,19 @@ import os
 import platform
 import ctypes
 
-# Check if running on Windows and ensure script has Administrator privileges
+# Check platform and privileges
 if platform.system() == "Windows":
     if not ctypes.windll.shell32.IsUserAnAdmin():
         print(f"{Fore.RED}This script requires Administrator privileges. Please run as Administrator.{Style.RESET_ALL}")
         exit(1)
+elif platform.system() == "Linux":  # [LINUX SUPPORT]
+    if os.geteuid() != 0:
+        print(f"{Fore.RED}This script requires root privileges. Please run with sudo.{Style.RESET_ALL}")
+        exit(1)
+else:
+    print(f"{Fore.RED}Unsupported OS: {platform.system()}{Style.RESET_ALL}")
+    exit(1)
+
 
 parser = argparse.ArgumentParser(description='Device network sniffer')
 parser.add_argument('--network', help='Network to scan (e.g., "192.168.0.0/24")',
