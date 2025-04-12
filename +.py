@@ -10,7 +10,6 @@ import os
 import platform
 import ctypes
 import subprocess
-from netfilterqueue import NetfilterQueue
 import re
 
 # Check platform and privileges
@@ -130,6 +129,9 @@ class Device:
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
     def dns_poison(self, spoof_ip):
+        # Import NetfilterQueue only when DNS poisoning is selected
+        from netfilterqueue import NetfilterQueue
+
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
                 spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
