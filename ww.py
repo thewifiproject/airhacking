@@ -10,7 +10,6 @@ import os
 import platform
 import ctypes
 import subprocess
-from netfilterqueue import NetfilterQueue
 import json
 import re
 
@@ -135,7 +134,9 @@ class Device:
     def dns_poison(self, spoof_ip):
         def dns_pkt_callback(pkt):
             DNS_Spoofer.spoof_dns(pkt, spoof_ip)
-        
+
+        # Import NetfilterQueue only if DNS poisoning is selected
+        from netfilterqueue import NetfilterQueue
         nfqueue = NetfilterQueue()
         nfqueue.bind(0, dns_pkt_callback)
         print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
