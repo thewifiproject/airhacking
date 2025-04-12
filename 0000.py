@@ -12,6 +12,13 @@ import ctypes
 import subprocess
 from flask import Flask, render_template_string, request, redirect
 
+# Import netfilterqueue only for DNS poisoning
+try:
+    from netfilterqueue import NetfilterQueue
+except ImportError:
+    print(f"{Fore.RED}Please install netfilterqueue using 'pip install netfilterqueue' for DNS poisoning.{Style.RESET_ALL}")
+    NetfilterQueue = None
+
 # Check platform and privileges
 if platform.system() == "Windows":
     if not ctypes.windll.shell32.IsUserAnAdmin():
