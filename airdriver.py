@@ -7,11 +7,9 @@ from colorama import Fore, Style, init
 # Initialize colorama
 init(autoreset=True)
 
-# Path to the cookies file to track reboot status
 COOKIES_FILE = "/tmp/reboot_status.json"
 
 def run_command(command, prompt=None, return_output=False):
-    """Run a shell command."""
     if prompt:
         print(Fore.BLUE + prompt)
     result = subprocess.run(command, shell=True, capture_output=return_output, text=True)
@@ -22,13 +20,11 @@ def run_command(command, prompt=None, return_output=False):
         exit(1)
 
 def system_update_upgrade():
-    """Update and upgrade the system."""
     run_command("sudo apt update", "Updating package lists...")
     run_command("sudo apt upgrade -y", "Upgrading packages...")
     run_command("sudo apt dist-upgrade -y", "Performing distribution upgrade...")
 
 def list_adapters():
-    """List compatible adapters and prompt the user to select one."""
     print(Fore.BLUE + "Listing compatible adapters...")
     output = run_command("lsusb", "Detected USB devices:", return_output=True)
     devices = output.splitlines()
@@ -47,8 +43,21 @@ def list_adapters():
         print(Fore.RED + "Invalid selection. Exiting.")
         exit(1)
 
+def choose_chipset():
+    print(Fore.CYAN + "Which Realtek chipset are you using?")
+    print(Fore.YELLOW + "[1] RTL8812AU")
+    print(Fore.YELLOW + "[2] RTL8814AU")
+    choice = input(Fore.CYAN + "Enter choice [1/2]: ").strip()
+    
+    if choice == "1":
+        return "rtl8812au"
+    elif choice == "2":
+        return "rtl8814au"
+    else:
+        print(Fore.RED + "Invalid choice. Exiting.")
+        exit(1)
+
 def check_reboot_status():
-    """Check if the system has been rebooted before."""
     if os.path.exists(COOKIES_FILE):
         with open(COOKIES_FILE, "r") as f:
             data = json.load(f)
@@ -57,12 +66,10 @@ def check_reboot_status():
     return False
 
 def set_reboot_status(status):
-    """Set the reboot status in cookies."""
     with open(COOKIES_FILE, "w") as f:
         json.dump({"rebooted": status}, f)
 
 def reboot_system():
-    """Prompt for system reboot."""
     print(Fore.YELLOW + "The system will be now rebooted! Do you want to continue? [Y/n]: ", end="")
     choice = input().strip().lower()
     if choice in ("y", "yes", ""):
@@ -73,19 +80,19 @@ def reboot_system():
         print(Fore.RED + "Exiting installer.")
         exit(0)
 
-def install_driver():
-    """Install the Realtek RTL8812AU driver."""
+def install_driver(chipset):
     run_command("sudo apt update", "Updating package lists...")
     run_command("sudo apt install -y realtek-rtl88xxau-dkms", "Installing DKMS package...")
-    run_command("git clone https://github.com/aircrack-ng/rtl8812au.git", "Cloning the driver repository...")
-    os.chdir("rtl8812au")
-    run_command("make", "Building the driver...")
-    run_command("sudo make install", "Installing the driver...")
+
+    if chipset == "rtl8812au":
+        run_command("git clone https://github.com/aircrack-ng/rtl8812au.git", "Cloning the RTL8812AU driver repository...")
+        os.chdir("rtl8812au")
+        run_command("make", "Building the RTL8812AU driver...")
+        run_command("sudo make install", "Installing the RTL8812AU driver...")
 
 def main():
-    print(Fore.GREEN + "Starting Realtek RTL8812AU Installer...")
+    print(Fore.GREEN + "Starting Realtek RTL88xxAU Installer...")
 
-    # Check if the system has been rebooted
     if not check_reboot_status():
         list_adapters()
         system_update_upgrade()
@@ -96,9 +103,13 @@ def main():
         if choice not in ("y", "yes", ""):
             print(Fore.RED + "Exiting installer.")
             exit(0)
+
+    # Choose chipset
+    chipset = choose_chipset()
     
-    # Install the driver
-    install_driver()
+    # Install the appropriate driver
+    install_driver(chipset)
+
     print(Fore.GREEN + "Replug your adapter to make it work. Waiting for 30 seconds...")
     time.sleep(30)
     print(Fore.GREEN + "Goodbye!")
