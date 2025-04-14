@@ -40,14 +40,31 @@ def get_new_interface():
     new_interfaces = list(final - initial)
     return new_interfaces[0] if new_interfaces else None
 
+def install_aircrack_ng():
+    print(Fore.YELLOW + "Installing aircrack-ng...")
+    run_command("sudo apt install -y aircrack-ng", "Installing aircrack-ng...")
+
+def uninstall_aircrack_ng():
+    print(Fore.YELLOW + "Uninstalling aircrack-ng...")
+    run_command("sudo apt remove --purge -y aircrack-ng", "Uninstalling aircrack-ng...")
+
 def run_airodump_test(interface):
     run_command(f"sudo ip link set {interface} down")
     run_command(f"sudo iw dev {interface} set type monitor")
     run_command(f"sudo ip link set {interface} up")
+    
+    # Install aircrack-ng before testing
+    install_aircrack_ng()
+    
     output = subprocess.run(f"timeout 10 airodump-ng {interface}", shell=True, capture_output=True, text=True)
+    
+    # Uninstall aircrack-ng after testing
+    uninstall_aircrack_ng()
+    
     run_command(f"sudo ip link set {interface} down")
     run_command(f"sudo iw dev {interface} set type managed")
     run_command(f"sudo ip link set {interface} up")
+    
     if "WPA" in output.stdout or "WEP" in output.stdout or "ESSID" in output.stdout:
         print(Fore.GREEN + "Installation Success: Networks detected.")
     else:
