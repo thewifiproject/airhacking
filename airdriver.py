@@ -6,8 +6,8 @@ from colorama import Fore, Style, init
 
 init(autoreset=True)
 
-COOKIES_FILE = "/tmp/reboot_status.json"
-INTERFACES_COOKIE = "/tmp/initial_interfaces.json"
+COOKIES_FILE = "reboot_status.json"
+INTERFACES_COOKIE = "initial_interfaces.json"
 
 def run_command(command, prompt=None, return_output=False, background=False):
     if prompt:
