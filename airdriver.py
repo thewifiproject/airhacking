@@ -83,12 +83,22 @@ def system_update_upgrade():
 
 def list_adapters():
     print(Fore.BLUE + "Listing compatible adapters...")
-    output = run_command("lsusb", "Detected USB devices:", return_output=True)
+    try:
+        output = run_command("lsusb", "Detected USB devices:", return_output=True)
+    except Exception as e:
+        print(Fore.RED + f"Error: Failed to detect USB devices. {str(e)}")
+        exit(1)
+
     devices = output.splitlines()
+    if not devices:
+        print(Fore.RED + "No USB devices found. Please check your connections.")
+        exit(1)
+
     print(Fore.CYAN + "Available USB devices:")
     for idx, device in enumerate(devices, start=1):
         print(Fore.YELLOW + f"[{idx}] {device}")
     print(Fore.CYAN + "Select which one: ", end="")
+    
     choice = input().strip()
     try:
         selected_device = devices[int(choice) - 1]
@@ -97,8 +107,8 @@ def list_adapters():
             return "8814AU"
         else:
             return "8812AU"
-    except (IndexError, ValueError):
-        print(Fore.RED + "Invalid selection. Exiting.")
+    except (IndexError, ValueError) as e:
+        print(Fore.RED + f"Invalid selection. {str(e)} Exiting.")
         exit(1)
 
 def install_driver(driver_type):
