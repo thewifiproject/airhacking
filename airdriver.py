@@ -40,10 +40,6 @@ def get_new_interface():
     new_interfaces = list(final - initial)
     return new_interfaces[0] if new_interfaces else None
 
-def is_aircrack_installed():
-    # Check if airodump-ng is available (indicating aircrack-ng is installed)
-    return run_command("which airodump-ng", return_output=True) != ""
-
 def install_aircrack_ng():
     print(Fore.YELLOW + "Installing aircrack-ng...")
     run_command("sudo apt install -y aircrack-ng", "Installing aircrack-ng...")
@@ -57,15 +53,13 @@ def run_airodump_test(interface):
     run_command(f"sudo iw dev {interface} set type monitor")
     run_command(f"sudo ip link set {interface} up")
     
-    # Install aircrack-ng if it's not installed
-    if not is_aircrack_installed():
-        install_aircrack_ng()
+    # Install aircrack-ng before testing
+    install_aircrack_ng()
     
     output = subprocess.run(f"timeout 10 airodump-ng {interface}", shell=True, capture_output=True, text=True)
     
     # Uninstall aircrack-ng after testing
-    if not is_aircrack_installed():
-        uninstall_aircrack_ng()
+    uninstall_aircrack_ng()
     
     run_command(f"sudo ip link set {interface} down")
     run_command(f"sudo iw dev {interface} set type managed")
@@ -89,14 +83,27 @@ def set_reboot_status(status):
         json.dump({"rebooted": status}, f)
 
 def reboot_system():
-    print(Fore.YELLOW + "The system will now reboot! Continue? [Y/n]: ", end="")
-    choice = input().strip().lower()
-    if choice in ("y", "yes", ""):
+    print(Fore.YELLOW + "The system needs to reboot for the changes to take effect.")
+    print(Fore.YELLOW + "Would you like to reboot now, defer the reboot, or skip it entirely?")
+    print(Fore.CYAN + "[1] Reboot Now")
+    print(Fore.CYAN + "[2] Defer Reboot (Reboot Later)")
+    print(Fore.CYAN + "[3] Skip Reboot (Continue Without Rebooting)")
+    
+    choice = input(Fore.CYAN + "Enter your choice [1/2/3]: ").strip()
+
+    if choice == "1":
         set_reboot_status(True)
+        print(Fore.YELLOW + "Rebooting the system now...")
         run_command("sudo reboot", "Rebooting the system...")
         exit(0)
+    elif choice == "2":
+        print(Fore.YELLOW + "You have chosen to defer the reboot. The system will continue with the installation.")
+        set_reboot_status(False)
+    elif choice == "3":
+        print(Fore.YELLOW + "Skipping the reboot. The system may not function properly without rebooting.")
+        set_reboot_status(False)
     else:
-        print(Fore.RED + "Exiting installer.")
+        print(Fore.RED + "Invalid choice. Exiting installer.")
         exit(0)
 
 def system_update_upgrade():
@@ -162,7 +169,7 @@ def main():
         system_update_upgrade()
         reboot_system()
     else:
-        print(Fore.YELLOW + "Do you still want to continue? [Y/n]: ", end="")
+        print(Fore.YELLOW + "The system was previously rebooted. Do you wish to continue? [Y/n]: ", end="")
         choice = input().strip().lower()
         if choice not in ("y", "yes", ""):
             print(Fore.RED + "Exiting installer.")
