@@ -77,14 +77,14 @@ class Device:
                         for line in raw_data.split('\r\n'):
                             if '=' in line and len(line) < 100:
                                 if any(k in line.lower() for k in ['username', 'user', 'login', 'email', 'user_id', 'pseudonym', 'phone']):
-                                    login_data = urllib.parse.unquote(line.split('=')[1])  # Decode URL-encoded string
+                                    login_data = urllib.parse.unquote(line.split('=')[1]).split('/')[0]  # Decode and handle special chars
 
                     # Detect password (pwd, passwd, heslo)
                     if any(k in raw_data.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
                         for line in raw_data.split('\r\n'):
                             if '=' in line and len(line) < 100:
                                 if any(k in line.lower() for k in ['password', 'pass', 'pwd', 'heslo']):
-                                    password_data = urllib.parse.unquote(line.split('=')[1])  # Decode URL-encoded string
+                                    password_data = urllib.parse.unquote(line.split('=')[1]).split('/')[0]  # Decode and handle special chars
                     
                     # If credentials found, print them
                     if login_data and password_data:
