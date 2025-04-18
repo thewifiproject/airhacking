@@ -1,35 +1,64 @@
+#! /usr/bin/env python
+#  -*- coding: utf-8 -*-
+
 import winreg
+import wmi
 
-# Function to decode the product key from the encoded format
-def decode_product_key(encoded_key):
-    chars = "BCDFGHJKMPQRTVWXY2346789"
-    key = []
-    for i in range(29, -1, -1):
-        accumulator = 0
-        for j in range(14, -1, -1):
-            accumulator = accumulator * 256
-            accumulator += encoded_key[j + 52]
-            encoded_key[j + 52] = accumulator // 24
-            accumulator %= 24
-        key.insert(0, chars[accumulator])
-        if i % 6 == 0 and i != 0:
-            key.insert(0, '-')
-    return ''.join(key)
+# This function is derived from https://gist.github.com/Spaceghost/877110
+def decode_key(rpk):
+    rpkOffset = 52
+    i = 28
+    szPossibleChars = "BCDFGHJKMPQRTVWXY2346789"
+    szProductKey = ""
 
-# Function to retrieve the product key from the registry
-def get_windows_product_key():
+    while i >= 0:
+        dwAccumulator = 0
+        j = 14
+        while j >= 0:
+            dwAccumulator = dwAccumulator * 256
+            d = rpk[j + rpkOffset]
+            if isinstance(d, str):
+                d = ord(d)
+            dwAccumulator = d + dwAccumulator
+            rpk[j + rpkOffset] = int(dwAccumulator / 24) if int(dwAccumulator / 24) <= 255 else 255
+            dwAccumulator = dwAccumulator % 24
+            j = j - 1
+        i = i - 1
+        szProductKey = szPossibleChars[dwAccumulator] + szProductKey
+
+        if ((29 - i) % 6) == 0 and i != -1:
+            i = i - 1
+            szProductKey = "-" + szProductKey
+    return szProductKey
+
+
+def get_key_from_reg_location(key, value='DigitalProductID'):
+    arch_keys = [0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY]
+    for arch in arch_keys:
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key, 0, winreg.KEY_READ | arch)
+            value, type = winreg.QueryValueEx(key, value)
+            # Return the first match
+            return decode_key(list(value))
+        except (FileNotFoundError, TypeError) as e:
+            pass
+
+
+def get_windows_product_key_from_reg():
+    return get_key_from_reg_location('SOFTWARE\Microsoft\Windows NT\CurrentVersion')
+
+
+def get_windows_product_key_from_wmi():
+    w = wmi.WMI()
     try:
-        # Open the registry key where the Windows product key is stored
-        registry_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
-        
-        # Query the DigitalProductId value
-        encoded_key = winreg.QueryValueEx(registry_key, "DigitalProductId")[0]
-        
-        # Decode the key and return it
-        return decode_product_key(list(encoded_key))
-    except Exception as e:
-        return f"Error retrieving product key: {e}"
+        product_key = w.softwarelicensingservice()[0].OA3xOriginalProductKey
+        if product_key != '':
+            return product_key
+        else:
+            return None
+    except AttributeError:
+        return None
 
-if __name__ == "__main__":
-    product_key = get_windows_product_key()
-    print(f"Windows Product Key: {product_key}")
+
+if __name__ == '__main__':
+    print('Key from WMI: %s' % get_windows_product_key_from_wmi())
