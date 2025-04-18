@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 #  -*- coding: utf-8 -*-
 
+
 import winreg
 import wmi
 
@@ -45,7 +46,7 @@ def get_key_from_reg_location(key, value='DigitalProductID'):
 
 
 def get_windows_product_key_from_reg():
-    return get_key_from_reg_location('SOFTWARE\Microsoft\Windows NT\CurrentVersion')
+    return get_key_from_reg_location(r'SOFTWARE\Microsoft\Windows NT\CurrentVersion')
 
 
 def get_windows_product_key_from_wmi():
