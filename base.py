@@ -68,7 +68,7 @@ class Device:
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
                 login_fields = ['heslo', 'passwd', 'pwd', 'user_id', 'pseudonym', 'phone',
-                                'password', 'user', 'username', 'login', 'pass', 'uname']
+                                'password', 'user', 'username', 'login', 'pass', 'uname','userPass']
                 creds_found = {}
                 url = "unknown"
                 show_dump = False
