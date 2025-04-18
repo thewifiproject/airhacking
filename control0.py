@@ -1,27 +1,30 @@
 import winreg
-import binascii
 
 def get_product_key():
+    key = winreg.HKEY_LOCAL_MACHINE
+    subkey = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+    value_name = "DigitalProductId"
+
     try:
-        # Open the registry key where the product key is stored
-        registry_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-        registry_value_name = "DigitalProductId"
+        registry_key = winreg.OpenKey(key, subkey)
+        product_id = winreg.QueryValueEx(registry_key, value_name)[0]
+        return decode_product_key(product_id)
+    except WindowsError:
+        return None
 
-        # Open the registry key
-        reg = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+def decode_product_key(digital_product_id):
+    key = []
+    for i in range(0, 15):
+        current = digital_product_id[i + 52]
+        current = current ^ 0x36
+        key.append(current)
 
-        # Read the DigitalProductId value, it is binary data
-        product_id = winreg.QueryValueEx(reg, registry_value_name)[0]
+    decoded_key = ''.join([chr(x) for x in key])
+    return decoded_key
 
-        # The product key is stored starting from the 52nd byte (index 52)
-        key = product_id[52:67]
-
-        # Decode the key
-        product_key = ''.join([str(x) for x in key])
-
-        return product_key
-    except Exception as e:
-        return f"An error occurred: {e}"
-
-# Call the function and print the result
-print(get_product_key())
+if __name__ == "__main__":
+    product_key = get_product_key()
+    if product_key:
+        print("Your Windows Product Key is:", product_key)
+    else:
+        print("Unable to retrieve the product key.")
