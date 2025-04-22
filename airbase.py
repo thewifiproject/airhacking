@@ -240,18 +240,21 @@ class BLEHandler:
             print(f"Error: {e}")
             print(f"Disconnecting from {mac}...")
 
-
- 
-    
     async def fuzz(self, mac, uuid):
         try:
             async with BleakClient(mac) as client:
-                malformed_data = bytes([random.randint(0, 255) for _ in range(16)])
-                print(f"Sending malformed data to {uuid}: {malformed_data.hex()}")
-                await client.write_gatt_char(uuid, malformed_data)
-                print(f"{Fore.GREEN}Fuzzing complete.{Style.RESET_ALL}")
+                print(f"Connected to {mac}, starting fuzz on characteristic {uuid}")
+                for _ in range(20):  # Number of fuzz attempts
+                    # Create random malformed data (e.g., 1–20 random bytes)
+                    length = random.randint(1, 20)
+                    malformed_data = bytes([random.randint(0, 255) for _ in range(length)])
+                    try:
+                        await client.write_gatt_char(uuid, malformed_data)
+                        print(f"Sent: {malformed_data.hex()}")
+                    except Exception as write_err:
+                        print(f"Write failed: {write_err}")
         except Exception as e:
-            print(f"{Fore.RED}Error during fuzzing: {e}{Style.RESET_ALL}")
+            print(f"Connection failed: {e}")
             
     async def subscribe(self, mac, uuid):
         async def notification_handler(sender, data):
@@ -259,13 +262,14 @@ class BLEHandler:
 
         try:
             async with BleakClient(mac) as client:
+                print(f"Connected to {mac}, subscribing to characteristic {uuid}...")
                 await client.start_notify(uuid, notification_handler)
-                print(f"Subscribed to {uuid}, receiving live data...")
-                await asyncio.sleep(30)
-                await client.stop_notify(uuid)
+                print("Subscribed! Listening for notifications... (Press Ctrl+C to stop)")
+                while True:
+                    await asyncio.sleep(1)
         except Exception as e:
-            print(f"Error during subscription: {e}")
-
+            print(f"Subscription failed: {e}")
+            
     async def write_data(self, mac, uuid, data):
         try:
             async with BleakClient(mac) as client:
