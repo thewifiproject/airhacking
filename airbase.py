@@ -35,6 +35,7 @@ parser = argparse.ArgumentParser(description='Device network sniffer')
 parser.add_argument('-n', help='Network to scan (e.g., "192.168.0.0/24")', required=True)
 parser.add_argument('-i', help='Network interface to use', required=True)
 parser.add_argument('-r', help='IP of your home router', required=True)
+parser.add_argument('-m', help='Mode: wifi or ble', required=True)
 opts = parser.parse_args()
 
 # DNS Spoofing for Multiple Targets
