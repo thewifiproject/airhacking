@@ -201,11 +201,11 @@ def arp_scan(network, iface):
 
 if __name__ == '__main__':
     while True:
-        targetip = arp_scan(opts.network, opts.iface)
+        targetip = arp_scan(opts.n, opts.i)
         if targetip == "0":
             print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
             break
-        device = Device(opts.routerip, targetip, opts.iface)
+        device = Device(opts.r, targetip, opts.i)
         device.enable_ip_forwarding()
         device.set_iptables()
         try:
