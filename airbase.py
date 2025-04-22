@@ -240,15 +240,18 @@ class BLEHandler:
             print(f"Error: {e}")
             print(f"Disconnecting from {mac}...")
 
+
+ 
     async def fuzz(self, mac, uuid):
         try:
             async with BleakClient(mac) as client:
                 malformed_data = bytes([random.randint(0, 255) for _ in range(16)])
+                print(f"Sending malformed data to {uuid}: {malformed_data}")
                 await client.write_gatt_char(uuid, malformed_data)
-                print(f"Fuzzing {uuid} with data: {malformed_data.hex()}")
+                print("Data sent successfully.")
         except Exception as e:
-            print(f"Error during fuzzing: {e}")
-
+            print(f"Fuzzing failed: {e}")
+            
     async def subscribe(self, mac, uuid):
         async def notification_handler(sender, data):
             print(f"Notification from {sender}: {data}")
