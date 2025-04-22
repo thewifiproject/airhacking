@@ -13,6 +13,10 @@ import subprocess
 import requests
 import re
 import urllib.parse
+from prettytable import PrettyTable
+from bleak import BleakScanner, BleakClient
+import asyncio
+import random
 
 # Check platform and privileges
 if platform.system() == "Windows":
