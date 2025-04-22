@@ -1,7 +1,7 @@
-# secure_web.py
-from flask import Flask, request, redirect, url_for, render_template_string
+from flask import Flask, request, redirect, url_for, render_template_string, session
 
 app = Flask(__name__)
+app.secret_key = "tajny_klic_123"  # pro session management
 
 USERNAME = "admin"
 PASSWORD = "SP-91862D361"
@@ -38,10 +38,17 @@ def login():
     error = None
     if request.method == 'POST':
         if request.form['username'] == USERNAME and request.form['password'] == PASSWORD:
-            return render_template_string(dashboard)
+            session['user'] = USERNAME
+            return redirect(url_for('dashboard_view'))
         else:
             error = "Neplatné přihlašovací údaje!"
     return render_template_string(login_form, error=error)
+
+@app.route('/dashboard')
+def dashboard_view():
+    if session.get('user') == USERNAME:
+        return render_template_string(dashboard)
+    return redirect(url_for('login'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=80)
