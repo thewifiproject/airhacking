@@ -12,6 +12,7 @@ import ctypes
 import subprocess
 import requests
 import re
+import urllib.parse
 
 # Check platform and privileges
 if platform.system() == "Windows":
@@ -72,6 +73,9 @@ class Device:
                 creds_found = {}
                 url = "unknown"
                 show_dump = False
+
+                # Decode URL-encoded characters
+                raw_data = urllib.parse.unquote(raw_data)
 
                 # Extract Host and Path for full URL
                 if "Host:" in raw_data and "GET" in raw_data:
