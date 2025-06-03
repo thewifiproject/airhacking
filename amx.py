@@ -20,11 +20,7 @@ except ImportError:
 
 def print_banner():
     print(colored("""
-   ___      __  _______   ______      _______   ______
-  / _ | ___/ / / __/ _ | / __/ /__ __/  _/ _ | / __/ /__
- / __ |/ _  / / _// __ |/ _// / -_) _/ // __ |/ _//  '_/
-/_/ |_|\_,_/ /_/ /_/ |_/_/ /_/\__/_/___/_/ |_/_/ /_/\_\\
-
+Created by Alfi Keita
     """, "cyan", attrs=["bold"]))
 
 # --- WEP/RC4/Attack Classes and Constants (PTW) ---
