@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+"""
+amx-z0: Combined WEP/WPA/WPA2-PSK/WPA2-PMKID Attack Suite
+
+Features:
+- Automatic network encryption detection (WEP, WPA/WPA2-PSK, WPA2-PMKID) from .pcap capture file.
+- WEP PTW attack (no wordlist required by default).
+- WPA/WPA2-PSK handshake extraction and brute-force (requires -P/--wordlist).
+- WPA2-PMKID brute-force (requires -P/--wordlist).
+- Minimal required arguments: positional <capture> file, -P (wordlist, required for WPA/WPA2/PMKID), -e (ESSID, only for PMKID).
+- No encryption type argument required.
+
+Usage:
+    python amx_z0_combined.py <capture/handshake/pmkid.pcap> -P <wordlist> [-e <essid>]
+"""
 
 import sys
 import binascii
@@ -641,7 +655,7 @@ def main():
         with open(args.wordlist, "r", encoding="utf-8", errors="ignore") as f:
             found = False
             attempt = 0
-            for line in f:
+            for line in f:a
                 password = line.strip()
                 attempt += 1
                 print(colored(f"[*] [{attempt:04d}] Password Probe: {password}", "magenta"))
