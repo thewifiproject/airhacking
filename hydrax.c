@@ -141,22 +141,30 @@ int try_ftp(char *user, char *pass, char *target, int port, int debug) {
     return res == CURLE_OK ? 0 : -1;
 }
 
-// SMB (libsmbclient)
+// SMB (libsmbclient) -- FIXED VERSION
+static char smb_user[128];
+static char smb_pass[128];
+static void smb_auth_fn(const char *srv, const char *shr, char *wg, int wglen, char *un, int unlen, char *pw, int pwlen) {
+    if (wglen > 0) wg[0] = '\0';
+    snprintf(un, unlen, "%s", smb_user);
+    snprintf(pw, pwlen, "%s", smb_pass);
+}
 int try_smb(char *user, char *pass, char *target, int port, int debug) {
-    char url[256]; snprintf(url, sizeof(url), "smb://%s/", target);
-    SMBCCTX *ctx = smbc_new_context();
-    if (!ctx) return -1;
-    smbc_init_context(ctx);
-    smbc_setOptionUserData(ctx, (void*)user);
-    smbc_setOptionAuthFunction(ctx, NULL); // Use default
-    smbc_setOptionPassword(ctx, pass);
-    smbc_setOptionWorkgroup(ctx, "");
-    smbc_setOptionPort(ctx, port);
-    smbc_setOptionTimeout(ctx, 2);
-    smbc_set_context(ctx);
-    int fd = smbc_open(ctx, url, O_RDONLY, 0);
-    if (fd >= 0) { smbc_close(ctx, fd); smbc_free_context(ctx, 1); return 0; }
-    smbc_free_context(ctx, 1);
+    // Save for callback
+    snprintf(smb_user, sizeof(smb_user), "%s", user);
+    snprintf(smb_pass, sizeof(smb_pass), "%s", pass);
+
+    // Init only once per process ideally, but safe to call multiple times
+    if (smbc_init(smb_auth_fn, debug) < 0) return -1;
+
+    char url[256];
+    snprintf(url, sizeof(url), "smb://%s/", target);
+
+    int fd = smbc_open(url, O_RDONLY, 0);
+    if (fd >= 0) {
+        smbc_close(fd);
+        return 0;
+    }
     return -1;
 }
 
