@@ -637,7 +637,7 @@ def main():
         with open(args.wordlist, "r", encoding="utf-8", errors="ignore") as f:
             found = False
             attempt = 0
-            for line in f:a
+            for line in f:
                 password = line.strip()
                 attempt += 1
                 print(colored(f"[*] [{attempt:04d}] Password Probe: {password}", "magenta"))
