@@ -15,6 +15,24 @@ from tqdm import tqdm
 import signal
 import sys
 
+# --- BEGIN: Suppress Traceback/Exceptions for PyInstaller Executable ---
+def silent_excepthook(exc_type, exc_value, exc_traceback):
+    # Suppress all output for unhandled exceptions
+    if exc_type == KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(0)
+    sys.exit(1)
+
+sys.excepthook = silent_excepthook
+
+if hasattr(threading, "excepthook"):
+    def silent_threading_excepthook(args):
+        if args.exc_type == KeyboardInterrupt:
+            print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(1)
+    threading.excepthook = silent_threading_excepthook
+# --- END: Suppress Traceback/Exceptions for PyInstaller Executable ---
+
 def signal_handler(sig, frame):
     print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
     sys.exit(0)
