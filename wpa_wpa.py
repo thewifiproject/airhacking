@@ -3,12 +3,38 @@ import binascii
 import hashlib
 import hmac
 import argparse
+import sqlite3
+import os
 from scapy.all import rdpcap, EAPOL, Dot11, Dot11Beacon, Dot11ProbeResp
 
 try:
     from termcolor import colored
 except ImportError:
     def colored(s, *args, **kwargs): return s
+
+def get_pmk_from_db(dbfile, ssid, password):
+    if not dbfile or not os.path.isfile(dbfile):
+        return None
+    try:
+        conn = sqlite3.connect(dbfile)
+        c = conn.cursor()
+        c.execute("SELECT id FROM ssids WHERE ssid=?", (ssid,))
+        ssid_row = c.fetchone()
+        if not ssid_row:
+            return None
+        ssid_id = ssid_row[0]
+        c.execute("SELECT id FROM passwords WHERE password=?", (password,))
+        pass_row = c.fetchone()
+        if not pass_row:
+            return None
+        pass_id = pass_row[0]
+        c.execute("SELECT pmk FROM pmks WHERE ssid_id=? AND password_id=?", (ssid_id, pass_id))
+        r = c.fetchone()
+        if r:
+            return bytes.fromhex(r[0])
+        return None
+    except Exception:
+        return None
 
 def get_ssid(packets):
     for pkt in packets:
@@ -150,8 +176,7 @@ def customPRF512(key, A, B):
         i += 1
     return R[:blen]
 
-def crack_passphrase_wpa(params, passphrase, debug=True):
-    # WPA (TKIP): MIC is HMAC-MD5, PMK is PBKDF2-HMAC-SHA1
+def crack_passphrase_wpa(params, passphrase, debug=True, pmk_dbfile=None):
     ssid = params["ssid"]
     ap_mac = binascii.unhexlify(params["ap_mac"].replace(":", ""))
     client_mac = binascii.unhexlify(params["client_mac"].replace(":", ""))
@@ -160,7 +185,11 @@ def crack_passphrase_wpa(params, passphrase, debug=True):
     mic = params["mic"]
     eapol = bytearray(params["eapol_raw"])
 
-    pmk = hashlib.pbkdf2_hmac('sha1', passphrase.encode(), ssid.encode(), 4096, 32)
+    pmk = None
+    if pmk_dbfile:
+        pmk = get_pmk_from_db(pmk_dbfile, ssid, passphrase)
+    if pmk is None:
+        pmk = hashlib.pbkdf2_hmac('sha1', passphrase.encode(), ssid.encode(), 4096, 32)
     B = min(ap_mac, client_mac) + max(ap_mac, client_mac) + min(anonce, snonce) + max(anonce, snonce)
     ptk = customPRF512(pmk, b"Pairwise key expansion", B)
     mic_calc = hmac.new(ptk[:16], eapol, hashlib.md5).digest()[:16]
@@ -171,8 +200,7 @@ def crack_passphrase_wpa(params, passphrase, debug=True):
         print(colored(f"        Expected MIC:   {mic.lower()}", "blue"))
     return mic_hex == mic.lower()
 
-def crack_passphrase_wpa2(params, passphrase, debug=True):
-    # WPA2 (CCMP/AES): MIC is HMAC-SHA1-128, PMK is PBKDF2-HMAC-SHA1
+def crack_passphrase_wpa2(params, passphrase, debug=True, pmk_dbfile=None):
     ssid = params["ssid"]
     ap_mac = binascii.unhexlify(params["ap_mac"].replace(":", ""))
     client_mac = binascii.unhexlify(params["client_mac"].replace(":", ""))
@@ -181,7 +209,11 @@ def crack_passphrase_wpa2(params, passphrase, debug=True):
     mic = params["mic"]
     eapol = bytearray(params["eapol_raw"])
 
-    pmk = hashlib.pbkdf2_hmac('sha1', passphrase.encode(), ssid.encode(), 4096, 32)
+    pmk = None
+    if pmk_dbfile:
+        pmk = get_pmk_from_db(pmk_dbfile, ssid, passphrase)
+    if pmk is None:
+        pmk = hashlib.pbkdf2_hmac('sha1', passphrase.encode(), ssid.encode(), 4096, 32)
     B = min(ap_mac, client_mac) + max(ap_mac, client_mac) + min(anonce, snonce) + max(anonce, snonce)
     ptk = customPRF512(pmk, b"Pairwise key expansion", B)
     mic_calc = hmac.new(ptk[:16], eapol, hashlib.sha1).digest()[:16]
@@ -193,21 +225,19 @@ def crack_passphrase_wpa2(params, passphrase, debug=True):
     return mic_hex == mic.lower()
 
 def identify_encryption_type(params):
-    # key_descriptor_version:
-    # 1 = WPA (TKIP, HMAC-MD5), 2 or 3 = WPA2 (CCMP/AES, HMAC-SHA1-128)
     ver = params.get("key_descriptor_version", None)
     if ver == 1:
         return "WPA"
     elif ver in (2, 3):
         return "WPA2"
     else:
-        # Fallback: try both
         return "UNKNOWN"
 
 def main():
     parser = argparse.ArgumentParser(description="WPA/WPA2 handshake extract & passphrase check tool")
     parser.add_argument("handshake", help="Handshake .pcap file")
     parser.add_argument("-P", "--wordlist", help="Wordlist file to use", required=True)
+    parser.add_argument("-r", "--pmk-db", help="SQLite PMK database (airvault.db format)", default=None)
     args = parser.parse_args()
 
     params = extract_handshake_info(args.handshake)
@@ -222,12 +252,12 @@ def main():
             attempt += 1
             print(colored(f"[*] [{attempt:04d}] Password Probe: {password}", "magenta"))
             if enc_type == "WPA":
-                result = crack_passphrase_wpa(params, password)
+                result = crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
             elif enc_type == "WPA2":
-                result = crack_passphrase_wpa2(params, password)
+                result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db)
             else:
-                # Try both if unknown
-                result = crack_passphrase_wpa2(params, password) or crack_passphrase_wpa(params, password)
+                result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db) or \
+                         crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
             if result:
                 print(colored(f"\n[!!!] PASSWORD CRACKED: >>> {password} <<<", "green", attrs=["reverse", "bold"]))
                 found = True
