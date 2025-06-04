@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import signal
+import sys 
+
 import argparse
 import sys
 import os
@@ -10,8 +13,7 @@ from scapy.layers.dot11 import *
 from scapy.layers.l2 import ARP, Ether
 import binascii
 import zlib
-import signal
-import sys
+
 
 def signal_handler(sig, frame):
     print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
