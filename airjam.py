@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 import signal
 import sys 
+import threading
+
+# --- BEGIN: Suppress Traceback/Exceptions for PyInstaller Executable ---
+def silent_excepthook(exc_type, exc_value, exc_traceback):
+    if exc_type == KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(0)
+    sys.exit(1)
+
+sys.excepthook = silent_excepthook
+
+if hasattr(threading, "excepthook"):
+    def silent_threading_excepthook(args):
+        if args.exc_type == KeyboardInterrupt:
+            print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(1)
+    threading.excepthook = silent_threading_excepthook
+# --- END: Suppress Traceback/Exceptions for PyInstaller Executable ---
 
 import argparse
 import sys
@@ -14,12 +32,12 @@ from scapy.layers.l2 import ARP, Ether
 import binascii
 import zlib
 
-
 def signal_handler(sig, frame):
     print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
+
 
 # ========== Terminal Colors and Utilities ==========
 RED = "\033[91m"
