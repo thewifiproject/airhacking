@@ -1,5 +1,13 @@
 import argparse
 from scapy.all import ARP, ICMP, UDP, Ether, RadioTap, Dot11, Dot11Deauth, IP, sendp, wrpcap
+import signal
+import sys
+
+def signal_handler(sig, frame):
+    print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 def forge_arp_packet(src_mac, dst_mac, src_ip, dst_ip):
     packet = Ether(src=src_mac, dst=dst_mac) / ARP(psrc=src_ip, pdst=dst_ip)
