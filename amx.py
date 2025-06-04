@@ -13,6 +13,9 @@ import concurrent.futures
 import time
 from tqdm import tqdm
 
+# Multiprocessing imports
+import multiprocessing
+
 try:
     from termcolor import colored
 except ImportError:
@@ -623,6 +626,24 @@ def detect_encryption_type(capture_file):
         return "PMKID"
     return "UNKNOWN"
 
+# Multiprocessing worker for WPA/WPA2 password check
+def password_worker(args):
+    password, enc_type, params, pmk_dbfile, found_flag = args
+    # Early exit if already found
+    if found_flag.value:
+        return None
+    if enc_type == "WPA":
+        result = crack_passphrase_wpa(params, password, pmk_dbfile=pmk_dbfile, debug=False)
+    elif enc_type == "WPA2":
+        result = crack_passphrase_wpa2(params, password, pmk_dbfile=pmk_dbfile, debug=False)
+    else:
+        result = crack_passphrase_wpa2(params, password, pmk_dbfile=pmk_dbfile, debug=False) or \
+                 crack_passphrase_wpa(params, password, pmk_dbfile=pmk_dbfile, debug=False)
+    if result:
+        found_flag.value = True
+        return password
+    return None
+
 def main():
     print_banner()
     parser = argparse.ArgumentParser(description="amx-z0: Combined WEP/WPA/WPA2-PSK/WPA2-PMKID Attack Suite")
@@ -726,8 +747,7 @@ def main():
         enc_type = identify_encryption_type(params)
         print(colored(f"\nIdentified Encryption Type: {enc_type}", "magenta", attrs=["bold"]))
 
-        # --- NEW LOGIC ---
-        # Accept: wordlist OR pmk-db (or both)
+        # --- Multiprocessing WPA/WPA2 cracking ---
         wordlist_passwords = []
         db_passwords = []
         found = False
@@ -752,21 +772,28 @@ def main():
         if wordlist_passwords and db_passwords:
             password_candidates.extend([pw for pw in db_passwords if pw not in wordlist_passwords])
 
-        for attempt, password in enumerate(password_candidates, 1):
-            print(colored(f"[*] [{attempt:04d}] Password Probe: {password}", "magenta"))
-            if enc_type == "WPA":
-                result = crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
-            elif enc_type == "WPA2":
-                result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db)
-            else:
-                result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db) or \
-                         crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
-            if result:
-                print(colored(f"\n[!!!] PASSWORD CRACKED: >>> {password} <<<", "green", attrs=["reverse", "bold"]))
-                found = True
-                break
+        # Multiprocessing Pool
+        manager = multiprocessing.Manager()
+        found_flag = manager.Value('b', False)
+        cpu_count = multiprocessing.cpu_count()
+        print(colored(f"[*] Using {cpu_count} CPU cores for password cracking...", "yellow"))
+        start = time.perf_counter()
+
+        with multiprocessing.Pool(cpu_count) as pool:
+            args_list = [(pw, enc_type, params, args.pmk_db, found_flag) for pw in password_candidates]
+            result_iter = pool.imap_unordered(password_worker, args_list, chunksize=128)
+            with tqdm(total=len(password_candidates), desc="Cracking Progress") as pbar:
+                for i, result in enumerate(result_iter, 1):
+                    pbar.update(1)
+                    if result:
+                        print(colored(f"\n[!!!] PASSWORD CRACKED: >>> {result} <<<", "green", attrs=["reverse", "bold"]))
+                        found = True
+                        found_flag.value = True
+                        break
+        finish = time.perf_counter()
         if not found:
             print(colored("\n[-] Password not found in provided wordlist or PMK database. Operation failed.", "red", attrs=["reverse", "bold"]))
+        print(f'[+] Finished in {round(finish-start, 2)} second(s)')
 
     else:
         print(colored("[-] Could not identify network encryption type or unsupported.", "red"))
