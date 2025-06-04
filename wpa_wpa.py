@@ -34,64 +34,87 @@ def extract_handshake_info(filename):
         print(colored("[!] SSID not found! SSID is required.", "red"))
         sys.exit(2)
 
-    ap_mac = None
-    client_mac = None
-    anonce = None
-    snonce = None
-    mic = None
-    eapol2or4_raw = None
-    key_descriptor_version = None
-
+    eapols = []
     for pkt in packets:
         if pkt.haslayer(EAPOL) and pkt.haslayer(Dot11):
             dot11 = pkt.getlayer(Dot11)
             eapol = pkt.getlayer(EAPOL)
             eapol_raw = bytes(eapol)
-            src = dot11.addr2
-            dst = dot11.addr1
-            bssid = dot11.addr3
-
             if len(eapol_raw) < 95:
                 continue
-
             key_info = int.from_bytes(eapol_raw[5:7], 'big')
             mic_present = (key_info & (1 << 8)) != 0
             ack = (key_info & (1 << 7)) != 0
             install = (key_info & (1 << 6)) != 0
-            # Descriptor version: lower 3 bits
             descriptor_version = key_info & 0b111
-
+            replay_counter = int.from_bytes(eapol_raw[9:17], 'big')
             nonce = eapol_raw[17:49].hex()
             mic_val = eapol_raw[81:97].hex()
+            src = dot11.addr2
+            dst = dot11.addr1
+            bssid = dot11.addr3
+            eapols.append({
+                "eapol_raw": eapol_raw,
+                "src": src,
+                "dst": dst,
+                "bssid": bssid,
+                "mic_present": mic_present,
+                "ack": ack,
+                "install": install,
+                "descriptor_version": descriptor_version,
+                "replay_counter": replay_counter,
+                "nonce": nonce,
+                "mic": mic_val,
+            })
 
-            # Message 1 of 4-way handshake: ANonce (from AP to Client)
-            if not mic_present and ack and not install and anonce is None:
-                anonce = nonce
-                ap_mac = src
-                client_mac = dst
+    # Try to find correct handshake pair: Message 1 (ANonce, no MIC) and Message 2/4 (SNonce, with MIC)
+    handshake = None
+    for i, pkt2 in enumerate(eapols):
+        if pkt2["mic_present"] and not pkt2["install"]:  # Message 2 of 4
+            for j in range(i-1, -1, -1):
+                pkt1 = eapols[j]
+                if (not pkt1["mic_present"] and pkt1["ack"] and not pkt1["install"] and
+                    pkt1["replay_counter"] == pkt2["replay_counter"] and
+                    pkt1["src"] == pkt2["dst"] and pkt1["dst"] == pkt2["src"]):
+                    # Found matching Message 1
+                    handshake = (pkt1, pkt2)
+                    break
+            if handshake:
+                break
 
-            # Message 2 or 4: SNonce + MIC (from Client to AP)
-            elif mic_present and snonce is None:
-                snonce = nonce
-                mic = mic_val
-                key_descriptor_version = descriptor_version
-                # zero MIC field
-                eapol_clean = zero_mic(eapol_raw)
-                # Read EAPOL payload length (bytes 2 and 3)
-                length = int.from_bytes(eapol_clean[2:4], 'big')
-                total_len = 4 + length
-                if total_len <= len(eapol_clean):
-                    eapol_clean = eapol_clean[:total_len]
-                eapol2or4_raw = eapol_clean
+    # Fallback: try Message 4 (mic_present, install)
+    if not handshake:
+        for i, pkt2 in enumerate(eapols):
+            if pkt2["mic_present"] and pkt2["install"]:  # Message 4 of 4
+                for j in range(i-1, -1, -1):
+                    pkt1 = eapols[j]
+                    if (not pkt1["mic_present"] and pkt1["ack"] and not pkt1["install"] and
+                        pkt1["replay_counter"] == pkt2["replay_counter"] and
+                        pkt1["src"] == pkt2["dst"] and pkt1["dst"] == pkt2["src"]):
+                        handshake = (pkt1, pkt2)
+                        break
+                if handshake:
+                    break
 
-                if not ap_mac:
-                    ap_mac = bssid if bssid != src else dst
-                if not client_mac:
-                    client_mac = src
-
-    if not (anonce and snonce and mic and eapol2or4_raw and ssid and ap_mac and client_mac):
-        print(colored("[!] Failed to extract all required handshake parameters.", "red"))
+    if not handshake:
+        print(colored("[!] Failed to extract all required handshake parameters (no matching EAPOL pairs).", "red"))
         sys.exit(3)
+
+    pkt1, pkt2 = handshake
+    ap_mac = pkt1["src"]
+    client_mac = pkt2["src"]
+    anonce = pkt1["nonce"]
+    snonce = pkt2["nonce"]
+    mic = pkt2["mic"]
+    key_descriptor_version = pkt2["descriptor_version"]
+
+    # zero MIC field
+    eapol_clean = zero_mic(pkt2["eapol_raw"])
+    length = int.from_bytes(eapol_clean[2:4], 'big')
+    total_len = 4 + length
+    if total_len <= len(eapol_clean):
+        eapol_clean = eapol_clean[:total_len]
+    eapol2or4_raw = eapol_clean
 
     print(colored("=========================================", "grey", "on_white"))
     print(colored("  [*] Handshake Extraction  ", "red", attrs=["reverse", "bold"]))
