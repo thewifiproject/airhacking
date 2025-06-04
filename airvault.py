@@ -1,5 +1,23 @@
 import signal
 import sys
+import threading
+
+# --- BEGIN: Suppress Traceback/Exceptions for PyInstaller Executable ---
+def silent_excepthook(exc_type, exc_value, exc_traceback):
+    if exc_type == KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(0)
+    sys.exit(1)
+
+sys.excepthook = silent_excepthook
+
+if hasattr(threading, "excepthook"):
+    def silent_threading_excepthook(args):
+        if args.exc_type == KeyboardInterrupt:
+            print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(1)
+    threading.excepthook = silent_threading_excepthook
+# --- END: Suppress Traceback/Exceptions for PyInstaller Executable ---
 
 def signal_handler(sig, frame):
     print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
@@ -162,7 +180,6 @@ def main():
             parser.print_help()
     except KeyboardInterrupt:
         print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
-        stop_event.set()
         sys.exit(0)
 
 if __name__ == "__main__":
