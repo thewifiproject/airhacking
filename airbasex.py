@@ -654,7 +654,12 @@ if __name__ == "__main__":
     if os.geteuid() != 0:
         print("[!] Please run as root")
         sys.exit(1)
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    try:
+        app = QApplication(sys.argv)
+        window = MainWindow()
+        window.show()
+        app.exec()
+    except KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        stop_event.set()
+        sys.exit(0)
