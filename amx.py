@@ -314,6 +314,34 @@ def get_pmk_from_db(dbfile, ssid, password):
     except Exception:
         return None
 
+def get_passwords_from_db(dbfile, ssid):
+    """Return all passwords in the PMK DB associated with the given SSID."""
+    passwords = []
+    if not dbfile or not os.path.isfile(dbfile):
+        return passwords
+    try:
+        conn = sqlite3.connect(dbfile)
+        c = conn.cursor()
+        c.execute("SELECT id FROM ssids WHERE ssid=?", (ssid,))
+        ssid_row = c.fetchone()
+        if not ssid_row:
+            return passwords
+        ssid_id = ssid_row[0]
+        # get all password_ids for the SSID
+        c.execute("SELECT password_id FROM pmks WHERE ssid_id=?", (ssid_id,))
+        pw_ids = [row[0] for row in c.fetchall()]
+        if not pw_ids:
+            return passwords
+        # get passwords from the password table
+        placeholder = ",".join("?" for _ in pw_ids)
+        query = f"SELECT password FROM passwords WHERE id IN ({placeholder})"
+        c.execute(query, pw_ids)
+        passwords = [row[0] for row in c.fetchall()]
+        return passwords
+    except Exception as e:
+        print(colored(f"Error reading PMK DB: {e}", "red"))
+        return []
+
 def get_ssid(packets):
     for pkt in packets:
         if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):
@@ -694,34 +722,51 @@ def main():
             progress.close()
             print(f'[+] Finished in {round(finish-start, 2)} second(s)')
     elif encryption_type == "WPA":
-        if not args.wordlist:
-            print(colored("[-] Wordlist (-P) is required for WPA/WPA2 handshake attack.", "red"))
-            return
-        # Use the replacement logic for WPA/WPA2 handshake cracking
         params = extract_handshake_info(args.capture)
         enc_type = identify_encryption_type(params)
         print(colored(f"\nIdentified Encryption Type: {enc_type}", "magenta", attrs=["bold"]))
 
-        with open(args.wordlist, "r", encoding="utf-8", errors="ignore") as f:
-            found = False
-            attempt = 0
-            for line in f:
-                password = line.strip()
-                attempt += 1
-                print(colored(f"[*] [{attempt:04d}] Password Probe: {password}", "magenta"))
-                if enc_type == "WPA":
-                    result = crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
-                elif enc_type == "WPA2":
-                    result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db)
-                else:
-                    result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db) or \
-                             crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
-                if result:
-                    print(colored(f"\n[!!!] PASSWORD CRACKED: >>> {password} <<<", "green", attrs=["reverse", "bold"]))
-                    found = True
-                    break
-            if not found:
-                print(colored("\n[-] Password not found in wordlist. Operation failed.", "red", attrs=["reverse", "bold"]))
+        # --- NEW LOGIC ---
+        # Accept: wordlist OR pmk-db (or both)
+        wordlist_passwords = []
+        db_passwords = []
+        found = False
+
+        if args.wordlist:
+            with open(args.wordlist, "r", encoding="utf-8", errors="ignore") as f:
+                wordlist_passwords = [line.strip() for line in f if line.strip()]
+        if args.pmk_db:
+            db_passwords = get_passwords_from_db(args.pmk_db, params["ssid"])
+
+        if not wordlist_passwords and not db_passwords:
+            print(colored("[-] Either a wordlist (-P) or a PMK database (-r) with the correct SSID is required for WPA/WPA2 handshake attack.", "red"))
+            return
+
+        password_candidates = []
+        if wordlist_passwords:
+            password_candidates.extend(wordlist_passwords)
+        # If no wordlist, but DB passwords exist, use those:
+        if not wordlist_passwords and db_passwords:
+            password_candidates.extend(db_passwords)
+        # If both given, prefer wordlist order but dedupe
+        if wordlist_passwords and db_passwords:
+            password_candidates.extend([pw for pw in db_passwords if pw not in wordlist_passwords])
+
+        for attempt, password in enumerate(password_candidates, 1):
+            print(colored(f"[*] [{attempt:04d}] Password Probe: {password}", "magenta"))
+            if enc_type == "WPA":
+                result = crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
+            elif enc_type == "WPA2":
+                result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db)
+            else:
+                result = crack_passphrase_wpa2(params, password, pmk_dbfile=args.pmk_db) or \
+                         crack_passphrase_wpa(params, password, pmk_dbfile=args.pmk_db)
+            if result:
+                print(colored(f"\n[!!!] PASSWORD CRACKED: >>> {password} <<<", "green", attrs=["reverse", "bold"]))
+                found = True
+                break
+        if not found:
+            print(colored("\n[-] Password not found in provided wordlist or PMK database. Operation failed.", "red", attrs=["reverse", "bold"]))
 
     else:
         print(colored("[-] Could not identify network encryption type or unsupported.", "red"))
