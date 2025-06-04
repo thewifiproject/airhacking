@@ -17,6 +17,14 @@ from PySide6.QtCore import Qt, QThread, Signal
 import socket
 import time
 import traceback  # Added for better error output
+import signal
+import sys
+
+def signal_handler(sig, frame):
+    print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 user_fields = [
     "phone", "user_pass", "uname", "user_login", "user_name", "email",
