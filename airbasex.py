@@ -4,6 +4,28 @@ import os
 import sys
 import re
 import threading
+
+# --- BEGIN: Suppress Traceback/Exceptions for PyInstaller Executable ---
+def silent_excepthook(exc_type, exc_value, exc_traceback):
+    if exc_type == KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(0)
+    sys.exit(1)
+
+sys.excepthook = silent_excepthook
+
+if hasattr(threading, "excepthook"):
+    def silent_threading_excepthook(args):
+        if args.exc_type == KeyboardInterrupt:
+            print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        sys.exit(1)
+    threading.excepthook = silent_threading_excepthook
+# --- END: Suppress Traceback/Exceptions for PyInstaller Executable ---
+
+import os
+import sys
+import re
+import threading
 from urllib.parse import unquote, parse_qs, unquote_plus
 import scapy.all as scapy
 from netfilterqueue import NetfilterQueue
