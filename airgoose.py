@@ -41,43 +41,50 @@ def main():
 
     args = parser.parse_args()
 
-    packets = []
-    for _ in range(args.count):
-        if args.arp:
-            if not args.si or not args.target:
-                print("Source and target IPs must be specified for ARP packets.")
+    try:
+        packets = []
+        for _ in range(args.count):
+            if args.arp:
+                if not args.si or not args.target:
+                    print("Source and target IPs must be specified for ARP packets.")
+                    return
+                src_ip, dst_ip = args.si.split(':')[0], args.target.split(':')[0]
+                packets.append(forge_arp_packet(args.srcmac, args.dstmac, src_ip, dst_ip))
+            elif args.icmp:
+                if not args.si or not args.target:
+                    print("Source and target IPs must be specified for ICMP packets.")
+                    return
+                src_ip, dst_ip = args.si.split(':')[0], args.target.split(':')[0]
+                packets.append(forge_icmp_packet(args.srcmac, args.dstmac, src_ip, dst_ip))
+            elif args.udp:
+                if not args.si or not args.target:
+                    print("Source and target IPs and ports must be specified for UDP packets.")
+                    return
+                src_ip, dst_ip = args.si.split(':')[0], args.target.split(':')[0]
+                sport, dport = int(args.si.split(':')[1]), int(args.target.split(':')[1])
+                packets.append(forge_udp_packet(args.srcmac, args.dstmac, src_ip, dst_ip, sport, dport))
+            elif args.deauth:
+                if not args.apmac:
+                    print("Access Point MAC address must be specified for deauthentication packets.")
+                    return
+                packets.append(forge_deauth_packet(args.srcmac, args.dstmac, args.apmac))
+            else:
+                print("No packet type specified.")
                 return
-            src_ip, dst_ip = args.si.split(':')[0], args.target.split(':')[0]
-            packets.append(forge_arp_packet(args.srcmac, args.dstmac, src_ip, dst_ip))
-        elif args.icmp:
-            if not args.si or not args.target:
-                print("Source and target IPs must be specified for ICMP packets.")
-                return
-            src_ip, dst_ip = args.si.split(':')[0], args.target.split(':')[0]
-            packets.append(forge_icmp_packet(args.srcmac, args.dstmac, src_ip, dst_ip))
-        elif args.udp:
-            if not args.si or not args.target:
-                print("Source and target IPs and ports must be specified for UDP packets.")
-                return
-            src_ip, dst_ip = args.si.split(':')[0], args.target.split(':')[0]
-            sport, dport = int(args.si.split(':')[1]), int(args.target.split(':')[1])
-            packets.append(forge_udp_packet(args.srcmac, args.dstmac, src_ip, dst_ip, sport, dport))
-        elif args.deauth:
-            if not args.apmac:
-                print("Access Point MAC address must be specified for deauthentication packets.")
-                return
-            packets.append(forge_deauth_packet(args.srcmac, args.dstmac, args.apmac))
-        else:
-            print("No packet type specified.")
-            return
 
-    if args.output:
-        wrpcap(args.output, packets)
-        print(f"Packets written to {args.output}")
-    else:
-        for packet in packets:
-            sendp(packet)
-        print("Packets sent.")
+        if args.output:
+            wrpcap(args.output, packets)
+            print(f"Packets written to {args.output}")
+        else:
+            for packet in packets:
+                if stop_event.is_set():
+                    break
+                sendp(packet)
+            print("Packets sent.")
+    except KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        stop_event.set()
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
