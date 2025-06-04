@@ -10,6 +10,14 @@ from scapy.layers.dot11 import *
 from scapy.layers.l2 import ARP, Ether
 import binascii
 import zlib
+import signal
+import sys
+
+def signal_handler(sig, frame):
+    print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 # ========== Terminal Colors and Utilities ==========
 RED = "\033[91m"
