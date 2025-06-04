@@ -440,7 +440,6 @@ def main():
     print_author()
     check_root()
     args = parse_args()
-
     try:
         if args.deauth:
             deauth_attack(args.interface, args.a.lower(), args.c.lower() if args.c else None, args.n)
@@ -457,12 +456,17 @@ def main():
                 send_mic_failure(args.interface, args.a.lower(), args.delay, args.client_mac)
             except KeyboardInterrupt:
                 print("\n[!] Ukončeno uživatelem.")
+                stop_event.set()
         elif args.chop_chop:
             pkt = get_wep_packet(args.interface, args.a)
             decrypted = decrypt_crc(pkt, args.m)
             reinject_packet(pkt, decrypted, args.m, args.interface)
         else:
             print_error("No valid attack selected")
+    except KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        stop_event.set()
+        sys.exit(0)
     except Exception as e:
         print_error(f"Unexpected error in main: {e}")
         sys.exit(1)
