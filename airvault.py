@@ -1,8 +1,3 @@
-import argparse
-import sqlite3
-import hashlib
-import os
-import sys
 import signal
 import sys
 
@@ -11,6 +6,12 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
+
+import argparse
+import sqlite3
+import hashlib
+import os
+import sys
 
 def pbkdf2_hex(passphrase, ssid, iterations=4096, dklen=32):
     return hashlib.pbkdf2_hmac('sha1', passphrase.encode(), ssid.encode(), iterations, dklen).hex()
