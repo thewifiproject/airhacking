@@ -134,30 +134,35 @@ def main():
     parser.add_argument("--export-cowpatty", metavar="FILE", help="Export database to coWPAtty format")
     args = parser.parse_args()
 
-    conn = db_init(args.db)
+    try:
+        conn = db_init(args.db)
 
-    if args.import_type:
-        if args.import_type[0] == "essid":
-            import_essid(conn, args.import_type[1])
-            print("Imported ESSIDs.")
-        elif args.import_type[0] == "passwd":
-            import_passwd(conn, args.import_type[1])
-            print("Imported passwords.")
-        else:
-            print("Unknown import type. Use 'essid' or 'passwd'.")
-            sys.exit(1)
-    if args.batch:
-        batch_compute(conn)
-    if args.stats:
-        stats(conn)
-    if args.verify:
-        verify(conn)
-    if args.clean:
-        clean(conn)
-    if args.export_cowpatty:
-        export_cowpatty(conn, args.export_cowpatty)
-    if not any([args.import_type, args.batch, args.stats, args.verify, args.clean, args.export_cowpatty]):
-        parser.print_help()
+        if args.import_type:
+            if args.import_type[0] == "essid":
+                import_essid(conn, args.import_type[1])
+                print("Imported ESSIDs.")
+            elif args.import_type[0] == "passwd":
+                import_passwd(conn, args.import_type[1])
+                print("Imported passwords.")
+            else:
+                print("Unknown import type. Use 'essid' or 'passwd'.")
+                sys.exit(1)
+        if args.batch:
+            batch_compute(conn)
+        if args.stats:
+            stats(conn)
+        if args.verify:
+            verify(conn)
+        if args.clean:
+            clean(conn)
+        if args.export_cowpatty:
+            export_cowpatty(conn, args.export_cowpatty)
+        if not any([args.import_type, args.batch, args.stats, args.verify, args.clean, args.export_cowpatty]):
+            parser.print_help()
+    except KeyboardInterrupt:
+        print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
+        stop_event.set()
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
